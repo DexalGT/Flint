@@ -1,0 +1,35 @@
+{
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:1420"
+  },
+  "bundle": {
+    "active": true,
+    "targets": "nsis",
+    "icon": [
+      "icons/icon.ico",
+      "icons/icon.png"
+    ]
+  },
+  "productName": "LoL Modding Suite",
+  "version": "0.1.0",
+  "identifier": "com.lol-modding-suite",
+  "plugins": {},
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "title": "LoL Modding Suite",
+        "width": 1280,
+        "height": 720,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  }
+}

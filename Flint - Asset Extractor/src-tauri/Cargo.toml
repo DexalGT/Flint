@@ -1,0 +1,74 @@
+[package]
+name = "lol-modding-suite"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "lol_modding_suite"
+path = "src/lib.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.0", features = ["full"] }
+reqwest = { version = "0.11", features = ["json", "stream"] }
+thiserror = "1.0"
+anyhow = "1.0"
+byteorder = "1.4"
+flate2 = "1.0"
+zstd = "0.12"
+xxhash-rust = { version = "0.8", features = ["xxh64"] }
+camino = "1.1"
+parking_lot = "0.12"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+sha1 = "0.10"
+chrono = { version = "0.4", features = ["serde"] }
+indexmap = { version = "2.1", features = ["serde"] }
+
+# DDS texture handling
+ddsfile = "0.5"
+image = "0.24"
+base64 = "0.21"
+
+# TEX texture decoding (BC1/BC3/ETC formats)
+texture2ddecoder = "0.1"
+
+# League toolkit for WAD operations
+league-toolkit = { git = "https://github.com/LeagueToolkit/league-toolkit", features = ["serde"] }
+
+# League Toolkit for BIN file parsing (replacing ritobin_rust)
+ltk_meta = { git = "https://github.com/LeagueToolkit/league-toolkit", rev = "77bf94f0dbb7e396f61348f531989abda296a1ae", features = ["serde"] }
+ltk_ritobin = { git = "https://github.com/LeagueToolkit/league-toolkit", rev = "77bf94f0dbb7e396f61348f531989abda296a1ae" }
+
+# Standard directories
+directories = "5.0"
+
+# Recursive directory walking
+walkdir = "2.4"
+
+# ZIP file creation for fantome export
+zip = { version = "2.4", features = ["deflate"] }
+regex = "1.12.2"
+
+# Windows registry access (Windows only)
+[target.'cfg(windows)'.dependencies]
+winreg = "0.52"
+
+[dev-dependencies]
+proptest = "1.0"
+tempfile = "3.0"
+
+[features]
+custom-protocol = ["tauri/custom-protocol"]
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true

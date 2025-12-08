@@ -1,0 +1,15 @@
+[package]
+name = "ritobin_rust"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+byteorder = "1.5"
+thiserror = "2.0"
+clap = { version = "4.4", features = ["derive"] }
+indexmap = { version = "2.1", features = ["serde"] }
+walkdir = "2.4"
+nom = "7.1"
+
