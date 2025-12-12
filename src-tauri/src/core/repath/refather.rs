@@ -6,7 +6,7 @@
 //! 3. Relocates the actual asset files to match the new paths
 //! 4. Optionally combines linked BINs into a single concat BIN
 
-use crate::core::bin::concat::{concatenate_linked_bins, classify_bin, BinCategory};
+use crate::core::bin::concat::{classify_bin, BinCategory};
 use crate::core::bin::ltk_bridge::{read_bin, write_bin};
 use crate::error::{Error, Result};
 use ltk_meta::PropertyValueEnum;
@@ -16,13 +16,15 @@ use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
 /// Configuration for repathing operations
+/// 
+/// Note: BIN concatenation is now handled separately by the organizer module.
+/// This config is purely for path modification operations.
 #[derive(Debug, Clone)]
 pub struct RepathConfig {
     pub creator_name: String,
     pub project_name: String,
     pub champion: String,
     pub target_skin_id: u32,
-    pub combine_linked_bins: bool,
     pub cleanup_unused: bool,
 }
 
@@ -40,7 +42,6 @@ pub struct RepathResult {
     pub bins_processed: usize,
     pub paths_modified: usize,
     pub files_relocated: usize,
-    pub bins_combined: usize,
     pub files_removed: usize,
     pub missing_paths: Vec<String>,
 }
@@ -67,7 +68,6 @@ pub fn repath_project(
         bins_processed: 0,
         paths_modified: 0,
         files_relocated: 0,
-        bins_combined: 0,
         files_removed: 0,
         missing_paths: Vec::new(),
     };
@@ -92,24 +92,6 @@ pub fn repath_project(
                 
                 for dep_path in &bin.dependencies {
                     let normalized_path = dep_path.to_lowercase().replace('\\', "/");
-                    
-                    if classify_bin(&normalized_path) == BinCategory::Ignore {
-                        tracing::warn!("Ignoring suspicious linked BIN: {}", normalized_path);
-                        
-                        // Aggressively delete the file so it doesn't crash other tools
-                        let deletion_path = path_mappings.get(&normalized_path)
-                            .cloned()
-                            .unwrap_or_else(|| normalized_path.clone());
-                        let full_del_path = content_base.join(&deletion_path);
-                        if full_del_path.exists() {
-                            if let Err(e) = fs::remove_file(&full_del_path) {
-                                tracing::warn!("Failed to delete ignored BIN {}: {}", deletion_path, e);
-                            } else {
-                                tracing::info!("Deleted ignored BIN: {}", deletion_path);
-                            }
-                        }
-                        continue;
-                    }
 
                     let actual_path = path_mappings.get(&normalized_path)
                         .cloned()
@@ -135,59 +117,14 @@ pub fn repath_project(
                     .map(|ext| ext.eq_ignore_ascii_case("bin"))
                     .unwrap_or(false)
             })
-            .filter(|e| {
-                if let Ok(rel_path) = e.path().strip_prefix(content_base) {
-                    let rel_str = rel_path.to_string_lossy();
-                    if classify_bin(&rel_str) == BinCategory::Ignore {
-                        tracing::warn!("Ignoring suspicious BIN file: {}", rel_str);
-                        if let Err(e) = fs::remove_file(e.path()) {
-                            tracing::warn!("Failed to delete ignored BIN {}: {}", rel_str, e);
-                        } else {
-                            tracing::info!("Deleted ignored BIN: {}", rel_str);
-                        }
-                        return false;
-                    }
-                }
-                true
-            })
             .map(|e| e.path().to_path_buf())
             .collect();
     }
 
     tracing::info!("Processing {} BIN files", bin_files.len());
 
-    // Step 1: Combine linked BINs if requested
-    if config.combine_linked_bins && main_bin_path.is_some() {
-        let main_path = main_bin_path.as_ref().unwrap();
-        
-        match concatenate_linked_bins(
-            main_path,
-            &config.project_name,
-            &config.creator_name,
-            &config.champion,
-            content_base,
-            path_mappings,
-        ) {
-            Ok(concat_result) => {
-                result.bins_combined = concat_result.source_count;
-                tracing::info!("Combined {} linked BINs", concat_result.source_count);
-                
-                let concat_full_path = content_base.join(&concat_result.concat_path);
-                if concat_full_path.exists() {
-                    bin_files.push(concat_full_path);
-                }
-                
-                // Remove deleted source BINs from bin_files
-                for source_path in &concat_result.source_paths {
-                    let full_path = content_base.join(source_path);
-                    bin_files.retain(|p| p != &full_path);
-                }
-            }
-            Err(e) => {
-                tracing::warn!("Failed to combine linked BINs: {}", e);
-            }
-        }
-    }
+    // Note: BIN concatenation is now handled by the organizer module.
+    // This function focuses purely on path modification.
 
     // Step 2: Scan BINs to collect referenced asset paths
     let mut all_asset_paths: HashSet<String> = HashSet::new();
@@ -199,11 +136,48 @@ pub fn repath_project(
     tracing::info!("Found {} unique asset paths in BINs", all_asset_paths.len());
 
     // Step 3: Determine which paths actually exist
+    // Use case-insensitive matching since Windows filesystem is case-insensitive
     let existing_paths: HashSet<String> = all_asset_paths
         .iter()
-        .filter(|path| content_base.join(path).exists())
+        .filter(|path| {
+            let full_path = content_base.join(path);
+            if full_path.exists() {
+                return true;
+            }
+            
+            // Try case-insensitive lookup by checking parent directory
+            if let Some(parent) = full_path.parent() {
+                if parent.exists() {
+                    if let Some(filename) = full_path.file_name() {
+                        let filename_lower = filename.to_string_lossy().to_lowercase();
+                        if let Ok(entries) = std::fs::read_dir(parent) {
+                            for entry in entries.filter_map(|e| e.ok()) {
+                                let entry_name = entry.file_name().to_string_lossy().to_lowercase();
+                                if entry_name == filename_lower {
+                                    return true;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            false
+        })
         .cloned()
         .collect();
+
+    // Log missing paths for debugging
+    let missing_count = all_asset_paths.len() - existing_paths.len();
+    if missing_count > 0 {
+        tracing::warn!("{} asset paths referenced in BINs but not found on disk:", missing_count);
+        for path in all_asset_paths.difference(&existing_paths).take(10) {
+            tracing::warn!("  Missing: {}", path);
+        }
+        if missing_count > 10 {
+            tracing::warn!("  ... and {} more", missing_count - 10);
+        }
+    }
 
     for path in all_asset_paths.difference(&existing_paths) {
         result.missing_paths.push(path.clone());
@@ -476,9 +450,15 @@ fn cleanup_irrelevant_bins(content_base: &Path, champion: &str, target_skin_id: 
     let champion_lower = champion.to_lowercase();
     let root_bin_name = format!("{}.bin", champion_lower);
     
-    // Pattern for animation bins: "Skin{ID}.bin"
+    // Patterns for animation bins: "Skin{ID}.bin" with various formats
     let target_anim_name = format!("skin{}.bin", target_skin_id);
     let target_anim_name_padded = format!("skin{:02}.bin", target_skin_id);
+
+    tracing::info!(
+        "Cleaning up irrelevant BINs (keeping animation: {} or {})",
+        target_anim_name,
+        target_anim_name_padded
+    );
 
     for entry in WalkDir::new(content_base)
         .into_iter()
@@ -500,35 +480,76 @@ fn cleanup_irrelevant_bins(content_base: &Path, champion: &str, target_skin_id: 
                 continue;
             }
 
+            // Skip the main skin BIN we're working with
+            if filename == target_anim_name || filename == target_anim_name_padded {
+                // Check if this is in skins folder (main BIN) - keep it
+                if rel_str.contains("/skins/") {
+                    continue;
+                }
+            }
+
             let category = classify_bin(&rel_str);
             let mut should_remove = false;
+            let mut reason = "";
 
             match category {
                 BinCategory::ChampionRoot => {
                     should_remove = true;
+                    reason = "champion root";
                 },
                 BinCategory::Animation => {
                     // Remove if it doesn't match target skin ID
                     if filename != target_anim_name && filename != target_anim_name_padded {
                         should_remove = true;
+                        reason = "wrong animation skin";
                     }
                 },
                 BinCategory::LinkedData => {
                     // Check for misplaced root bin in Type 3 folders
                     if filename == root_bin_name {
                         should_remove = true;
+                        reason = "misplaced champion root";
+                    }
+                    
+                    // Check if this is a skin BIN in skins folder (e.g., skins/skin1.bin)
+                    if rel_str.contains("/skins/") && filename.starts_with("skin") && filename.ends_with(".bin") {
+                        let name_without_ext = filename.trim_end_matches(".bin");
+                        let num_part = name_without_ext.trim_start_matches("skin");
+                        
+                        if num_part.chars().all(|c| c.is_ascii_digit()) {
+                            if let Ok(skin_num) = num_part.parse::<u32>() {
+                                if skin_num != target_skin_id {
+                                    should_remove = true;
+                                    reason = "wrong skin BIN";
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Check if this is a combined skin data BIN (e.g., katarina_skins_skin0_skins_skin1...bin)
+                    // These are the big linked BINs that contain data for multiple skins
+                    // We only keep these if they were referenced by our target skin (and already concatenated)
+                    if filename.contains("_skins_") || filename.contains("_skin") {
+                        // This is a combined skin data file - check if it matches our concat pattern
+                        let is_our_concat = filename.contains("__concat");
+                        if !is_our_concat {
+                            // It's a linked skin data BIN that wasn't our concat - remove it
+                            should_remove = true;
+                            reason = "unreferenced skin data BIN";
+                        }
                     }
                 },
                 BinCategory::Ignore => {
                     should_remove = true;
+                    reason = "ignored/corrupt";
                 }
             }
 
             if should_remove {
                 if let Err(e) = fs::remove_file(path) {
-                    tracing::warn!("Failed to remove irrelevant BIN {}: {}", path.display(), e);
+                    tracing::warn!("Failed to remove {} BIN {}: {}", reason, path.display(), e);
                 } else {
-                    tracing::debug!("Removed irrelevant BIN: {}", rel_str);
+                    tracing::debug!("Removed {} BIN: {}", reason, rel_str);
                     removed += 1;
                 }
             }

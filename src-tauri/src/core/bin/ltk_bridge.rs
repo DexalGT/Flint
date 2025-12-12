@@ -165,6 +165,61 @@ pub fn tree_to_text_with_hashes<H: ltk_ritobin::HashProvider>(
         .map_err(|e| BinError(format!("Failed to convert to text: {}", e)))
 }
 
+/// Load BIN-specific hash files into a HashMapProvider
+///
+/// Loads hashes from the RitoShark hash directory:
+/// - hashes.bintypes.txt (type names)
+/// - hashes.binfields.txt (field/property names)
+/// - hashes.binentries.txt (entry/object names)
+/// - hashes.binhashes.txt (generic hashes)
+///
+/// Uses the built-in load_from_directory method which properly maps
+/// each file to its category (entries, fields, hashes, types).
+///
+/// # Returns
+/// A HashMapProvider populated with all loaded hashes
+pub fn load_bin_hashes() -> HashMapProvider {
+    let mut hashes = HashMapProvider::new();
+    
+    // Get the RitoShark hash directory
+    let hash_dir = if let Ok(appdata) = std::env::var("APPDATA") {
+        std::path::PathBuf::from(appdata)
+            .join("RitoShark")
+            .join("Requirements")
+            .join("Hashes")
+    } else {
+        tracing::warn!("APPDATA not set, cannot load hash files");
+        return hashes;
+    };
+    
+    if !hash_dir.exists() {
+        tracing::warn!("Hash directory does not exist: {}", hash_dir.display());
+        return hashes;
+    }
+    
+    // Use the built-in load_from_directory method
+    // This loads each category from its respective file:
+    // - hashes.binentries.txt -> entries (entry path hashes)
+    // - hashes.binfields.txt  -> fields (property/field name hashes)
+    // - hashes.binhashes.txt  -> hashes (hash value hashes)
+    // - hashes.bintypes.txt   -> types (type/class name hashes)
+    hashes.load_from_directory(&hash_dir);
+    
+    let total = hashes.total_count();
+    tracing::info!("Loaded {} total BIN hashes for name resolution", total);
+    
+    hashes
+}
+
+/// Convert a BinTree to ritobin text format with automatic hash loading
+///
+/// This is a convenience function that loads BIN hashes and converts the tree.
+/// Use this for user-facing conversions where resolved names are desired.
+pub fn tree_to_text_with_resolved_names(tree: &BinTree) -> Result<String> {
+    let hashes = load_bin_hashes();
+    tree_to_text_with_hashes(tree, &hashes)
+}
+
 /// Parse ritobin text format to BinTree.
 ///
 /// # Arguments

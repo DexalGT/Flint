@@ -4,7 +4,7 @@
 //! Uses ltk_fantome for league-mod compatible .fantome export.
 
 use crate::core::export::generate_fantome_filename;
-use crate::core::repath::refather::{repath_project, RepathConfig};
+use crate::core::repath::{organize_project, OrganizerConfig};
 use ltk_fantome::pack_to_fantome;
 use ltk_mod_project::{ModProject, ModProjectAuthor};
 use serde::{Deserialize, Serialize};
@@ -72,39 +72,46 @@ pub async fn repath_project_cmd(
         "message": "Starting repathing..."
     }));
 
-    let config = RepathConfig {
+    let config = OrganizerConfig {
+        enable_concat: true,
+        enable_repath: true,
         creator_name: creator.clone(),
         project_name: project.clone(),
         champion: String::new(), // Champion not provided in direct repath call
         target_skin_id: 0,
-        combine_linked_bins: true, // Enable linked BIN concatenation
         cleanup_unused: true,
     };
 
     let result = tokio::task::spawn_blocking(move || {
         // Empty mappings since this is a manual repath, not from extraction
         let path_mappings: HashMap<String, String> = HashMap::new();
-        repath_project(&content_base, &config, &path_mappings)
+        organize_project(&content_base, &config, &path_mappings)
     })
     .await
     .map_err(|e| format!("Task failed: {}", e))?;
 
     match result {
         Ok(result) => {
+            let repath_res = result.repath_result.as_ref();
+            let bins_processed = repath_res.map(|r| r.bins_processed).unwrap_or(0);
+            let paths_modified = repath_res.map(|r| r.paths_modified).unwrap_or(0);
+            let files_relocated = repath_res.map(|r| r.files_relocated).unwrap_or(0);
+            let missing_paths = repath_res.map(|r| r.missing_paths.clone()).unwrap_or_default();
+
             let _ = app.emit("repath-progress", serde_json::json!({
                 "status": "complete",
-                "message": format!("Repathed {} paths in {} BIN files", result.paths_modified, result.bins_processed)
+                "message": format!("Repathed {} paths in {} BIN files", paths_modified, bins_processed)
             }));
 
             Ok(RepathResultDto {
                 success: true,
-                bins_processed: result.bins_processed,
-                paths_modified: result.paths_modified,
-                files_relocated: result.files_relocated,
-                missing_paths: result.missing_paths,
+                bins_processed,
+                paths_modified,
+                files_relocated,
+                missing_paths,
                 message: format!(
                     "Successfully repathed {} paths in {} BIN files",
-                    result.paths_modified, result.bins_processed
+                    paths_modified, bins_processed
                 ),
             })
         }
@@ -154,19 +161,20 @@ pub async fn export_fantome(
             "message": "Repathing assets..."
         }));
 
-        let config = RepathConfig {
+        let config = OrganizerConfig {
+            enable_concat: true,
+            enable_repath: true,
             creator_name: metadata.author.clone(),
             project_name: slugify(&metadata.name),
             champion: champion.clone(),
             target_skin_id: 0,
-            combine_linked_bins: true,
             cleanup_unused: false,
         };
 
         let repath_path = path.join("content").join("base");
         let repath_result = tokio::task::spawn_blocking(move || {
             let path_mappings: HashMap<String, String> = HashMap::new();
-            repath_project(&repath_path, &config, &path_mappings)
+            organize_project(&repath_path, &config, &path_mappings)
         })
         .await
         .map_err(|e| format!("Repath task failed: {}", e))?;

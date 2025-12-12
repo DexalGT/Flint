@@ -334,37 +334,8 @@ pub async fn parse_bin_file_to_text(
 
     tracing::debug!("Parsed bin file with {} objects", bin.objects.len());
 
-    // Load hashes from hash directory for name lookup using ltk_ritobin's HashMapProvider
-    let mut hashes = crate::core::bin::HashMapProvider::new();
-    
-    // Load hash files from the standard RitoShark location: %APPDATA%/RitoShark/Requirements/Hashes
-    if let Ok(appdata) = std::env::var("APPDATA") {
-        let hash_dir = std::path::PathBuf::from(appdata)
-            .join("RitoShark")
-            .join("Requirements")
-            .join("Hashes");
-        
-        tracing::debug!("Looking for hash files in: {}", hash_dir.display());
-        
-        if hash_dir.exists() {
-            // Load FNV1a hashes (bin hashes) from the hash files
-            for hash_file in &["hashes.binhashes.txt", "hashes.binentries.txt", "hashes.binfields.txt", "hashes.bintypes.txt"] {
-                let file_path = hash_dir.join(hash_file);
-                if file_path.exists() {
-                    tracing::debug!("Loading hash file: {}", file_path.display());
-                    // TODO: Load hashes into HashMapProvider
-                    // For now, we'll use hex-only output
-                }
-            }
-            
-            tracing::info!("Loaded hash files for name lookup from: {}", hash_dir.display());
-        } else {
-            tracing::warn!("Hash directory does not exist: {}", hash_dir.display());
-        }
-    }
-    
-    // Convert to text format using ltk_ritobin with hash provider
-    let text = crate::core::bin::tree_to_text(&bin)
+    // Convert to text format with automatic hash resolution
+    let text = crate::core::bin::tree_to_text_with_resolved_names(&bin)
         .map_err(|e| format!("Failed to convert to text: {}", e))?;
 
     tracing::info!("Successfully parsed BIN file to text ({} chars)", text.len());
@@ -427,11 +398,8 @@ pub async fn read_or_convert_bin(
     let bin = crate::core::bin::read_bin_ltk(&data)
         .map_err(|e| format!("Failed to parse bin file: {}", e))?;
 
-    // NOTE: Hash lookup for name resolution is not implemented yet
-    // The ltk_ritobin will output hex hashes instead of resolved names
-
-    // Convert to text
-    let text = crate::core::bin::tree_to_text(&bin)
+    // Convert to text with automatic hash resolution
+    let text = crate::core::bin::tree_to_text_with_resolved_names(&bin)
         .map_err(|e| format!("Failed to convert to text: {}", e))?;
 
     // Cache the result

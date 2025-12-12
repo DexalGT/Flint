@@ -54,29 +54,38 @@ pub fn classify_bin(path: &str) -> BinCategory {
     let normalized = path.replace('\\', "/");
     let lower = normalized.to_lowercase();
 
-    // Type 1: Champion Root BIN
+    // Extract just the filename for pattern matching
+    let filename = lower.split('/').last().unwrap_or("");
+
+    // Type 1: Champion Root BIN - detect by path pattern
+    // e.g., data/characters/kayn/kayn.bin
     if lower.starts_with("data/characters/") && !lower.contains("/animations/") {
         let parts: Vec<&str> = normalized.split('/').collect();
         if parts.len() == 4 && parts[3].to_lowercase().ends_with(".bin") {
             let champion_folder = parts[2].to_lowercase();
-            let filename = parts[3].to_lowercase();
-            if filename == format!("{}.bin", champion_folder) {
+            let bin_filename = parts[3].to_lowercase();
+            if bin_filename == format!("{}.bin", champion_folder) {
                 return BinCategory::ChampionRoot;
             }
         }
     }
 
-    // Type 2: Animation BINs
+    // Also detect "root.bin" anywhere as ChampionRoot (should be removed)
+    if filename == "root.bin" {
+        return BinCategory::ChampionRoot;
+    }
+
+    // Type 2: Animation BINs - in the animations folder
+    // e.g., data/characters/kayn/animations/skin2.bin
     if lower.starts_with("data/characters/") && lower.contains("/animations/") {
         return BinCategory::Animation;
     }
 
-    // Type 3: Everything else
-    // Check for recursive/malformed patterns first
-    if lower.matches("_skins_").count() > 1 || lower.matches("/skins/").count() > 1 {
-        return BinCategory::Ignore;
-    }
-    
+    // Type 3: Everything else is LinkedData
+    // This includes all the skin data BINs like:
+    // - data/kayn_skins_skin0_skins_skin1_....bin (combined skin data)
+    // - data/characters/kayn/skins/skin2.bin (main skin BIN)
+    // We don't judge by filename - only by whether the file can be parsed
     BinCategory::LinkedData
 }
 
@@ -207,10 +216,12 @@ pub fn create_concat_bin(
         .build();
     let object_count = concat_bin.objects.len();
 
-    // 5. Generate concat path
+    // 5. Generate concat path (sanitize names: replace spaces with dashes)
+    let creator_sanitized = creator_name.replace(' ', "-");
+    let project_sanitized = project_name.replace(' ', "-");
     let concat_path = format!(
         "data/{}_{}_{}__Concat.bin",
-        champion.to_lowercase(), creator_name, project_name
+        champion.to_lowercase(), creator_sanitized, project_sanitized
     );
 
     // 6. Save the concat BIN immediately
@@ -335,20 +346,24 @@ pub fn concatenate_linked_bins(
         tracing::info!("Updated main BIN linked list: {}", main_bin_path.display());
     }
 
-    // 5. Delete the original Type 3 BINs
+    // 5. Delete the original Type 3 BINs that were concatenated
     let mut deleted_count = 0;
+    tracing::info!("Deleting {} source BINs that were concatenated", result.source_paths.len());
     for source_path in &result.source_paths {
         let full_path = content_base.join(source_path);
+        tracing::debug!("Checking for deletion: {} -> {}", source_path, full_path.display());
         if full_path.exists() {
             match fs::remove_file(&full_path) {
                 Ok(_) => {
-                    tracing::debug!("Deleted concatenated source BIN: {}", source_path);
+                    tracing::info!("Deleted concatenated source BIN: {}", source_path);
                     deleted_count += 1;
                 }
                 Err(e) => {
                     tracing::warn!("Failed to delete source BIN {}: {}", source_path, e);
                 }
             }
+        } else {
+            tracing::warn!("Source BIN not found for deletion: {} (full path: {})", source_path, full_path.display());
         }
     }
     tracing::info!("Deleted {} original Type 3 BINs after concatenation", deleted_count);

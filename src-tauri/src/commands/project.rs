@@ -8,7 +8,7 @@ use crate::core::project::{
     save_project as core_save_project,
     Project,
 };
-use crate::core::repath::{repath_project, RepathConfig};
+use crate::core::repath::{organize_project, OrganizerConfig};
 use crate::core::bin::{classify_bin, BinCategory};
 use crate::core::wad::extractor::{find_champion_wad, extract_skin_assets, ExtractionResult};
 use crate::state::HashtableState;
@@ -152,30 +152,33 @@ pub async fn create_project(
 
             tracing::info!("Repathing assets with prefix: ASSETS/{}/{}", creator, name);
 
-            let repath_config = RepathConfig {
+            let repath_config = OrganizerConfig {
+                enable_concat: true,
+                enable_repath: true,
                 creator_name: creator.clone(),
                 project_name: name.clone(),
                 champion: champion.clone(),
                 target_skin_id: skin_id,
-                combine_linked_bins: true,
                 cleanup_unused: true,
             };
 
             let assets_path_for_repath = project.assets_path();
             let path_mappings = extraction_result.path_mappings.clone();
             let repath_result = tokio::task::spawn_blocking(move || {
-                repath_project(&assets_path_for_repath, &repath_config, &path_mappings)
+                organize_project(&assets_path_for_repath, &repath_config, &path_mappings)
             })
             .await;
 
             match repath_result {
                 Ok(Ok(result)) => {
+                    let paths_modified = result.repath_result.as_ref().map(|r| r.paths_modified).unwrap_or(0);
+                    let files_relocated = result.repath_result.as_ref().map(|r| r.files_relocated).unwrap_or(0);
+                    let bins_combined = result.concat_result.as_ref().map(|r| r.source_count).unwrap_or(0);
                     tracing::info!(
-                        "Repathing complete: {} paths modified, {} files relocated, {} BINs combined, {} files removed",
-                        result.paths_modified,
-                        result.files_relocated,
-                        result.bins_combined,
-                        result.files_removed
+                        "Project organization complete: {} paths modified, {} files relocated, {} BINs combined",
+                        paths_modified,
+                        files_relocated,
+                        bins_combined
                     );
                 }
                 Ok(Err(e)) => {
@@ -434,7 +437,7 @@ pub async fn preconvert_project_bins(
 async fn convert_bin_file(bin_path: &str) -> Result<(), String> {
     use std::fs;
     use std::io::Write;
-    use crate::core::bin::{read_bin_ltk, tree_to_text, MAX_BIN_SIZE};
+    use crate::core::bin::{read_bin_ltk, tree_to_text_with_resolved_names, MAX_BIN_SIZE};
     
     // CRITICAL: Use println + flush to GUARANTEE visibility before crash
     println!("[BIN] Converting: {}", bin_path);
@@ -484,10 +487,8 @@ async fn convert_bin_file(bin_path: &str) -> Result<(), String> {
     );
     let _ = std::io::stdout().flush();
 
-    // NOTE: Hash lookup for name resolution is not implemented yet
-    // The ltk_ritobin will output hex hashes instead of resolved names
-
-    let text = tree_to_text(&bin)
+    // Use hash resolution for proper name output (loads hashes automatically)
+    let text = tree_to_text_with_resolved_names(&bin)
         .map_err(|e| format!("Failed to convert to text for '{}': {}", bin_path, e))?;
 
     let ritobin_path = format!("{}.ritobin", bin_path);

@@ -287,13 +287,25 @@ pub fn extract_skin_assets(
     let mut path_mappings: HashMap<String, String> = HashMap::new();
     
     // Extract all chunks - we'll clean up unused files later based on skin BIN references
+    let mut skipped_unknown = 0;
     for (path_hash, chunk) in chunks.iter() {
         // Resolve the chunk path
         let resolved_path = hashtable.resolve(*path_hash).to_string();
         let path_lower = resolved_path.to_lowercase();
         
+        // Check if this is an unresolved hash (hex string that doesn't look like a path)
+        let is_unresolved = resolved_path.chars().all(|c| c.is_ascii_hexdigit());
+        
         // Extract everything under assets/ or data/
+        // Also extract unresolved hashes (they might be important shared assets)
         if !path_lower.starts_with("assets/") && !path_lower.starts_with("data/") {
+            if is_unresolved {
+                // Log unresolved hashes for debugging - these are files in WAD but not in hashtable
+                skipped_unknown += 1;
+                if skipped_unknown <= 5 {
+                    tracing::debug!("Unresolved hash in WAD: {:016x}", path_hash);
+                }
+            }
             continue;
         }
         
@@ -348,6 +360,13 @@ pub fn extract_skin_assets(
                 tracing::warn!("Failed to write '{}': {}", output_path_to_use.display(), e);
             }
         }
+    }
+    
+    if skipped_unknown > 0 {
+        tracing::warn!(
+            "Skipped {} files with unresolved hashes (not in hashtable)",
+            skipped_unknown
+        );
     }
     
     tracing::info!(
