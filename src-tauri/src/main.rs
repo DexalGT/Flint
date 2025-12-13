@@ -114,6 +114,7 @@ fn main() {
             // Export commands
             commands::export::repath_project_cmd,
             commands::export::export_fantome,
+            commands::export::export_modpkg,
             commands::export::get_fantome_filename,
             commands::export::get_export_preview,
         ])

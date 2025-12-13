@@ -314,6 +314,176 @@ pub async fn get_export_preview(project_path: String) -> Result<Vec<String>, Str
     Ok(files)
 }
 
+/// Export a project as a .modpkg mod package using ltk_modpkg
+///
+/// # Arguments
+/// * `project_path` - Path to the project directory
+/// * `output_path` - Path where the .modpkg file will be created
+#[tauri::command]
+pub async fn export_modpkg(
+    project_path: String,
+    output_path: String,
+    app: tauri::AppHandle,
+) -> Result<ExportResult, String> {
+    tracing::info!(
+        "Frontend requested modpkg export: {} -> {}",
+        project_path,
+        output_path
+    );
+
+    let path = PathBuf::from(&project_path);
+    let output = PathBuf::from(&output_path);
+
+    let _ = app.emit("export-progress", serde_json::json!({
+        "status": "exporting",
+        "progress": 0.3,
+        "message": "Creating modpkg package..."
+    }));
+
+    // Read ModProject from mod.config.json
+    let mod_config_path = path.join("mod.config.json");
+    let mod_project = if mod_config_path.exists() {
+        let config_data = std::fs::read_to_string(&mod_config_path)
+            .map_err(|e| format!("Failed to read mod.config.json: {}", e))?;
+        serde_json::from_str::<ModProject>(&config_data)
+            .map_err(|e| format!("Failed to parse mod.config.json: {}", e))?
+    } else {
+        return Err("mod.config.json not found - cannot export modpkg without project metadata".to_string());
+    };
+
+    let export_path = path.clone();
+    let export_output = output.clone();
+
+    let result = tokio::task::spawn_blocking(move || {
+        export_with_ltk_modpkg(&export_path, &export_output, &mod_project)
+    })
+    .await
+    .map_err(|e| format!("Export task failed: {}", e))?;
+
+    match result {
+        Ok((file_count, total_size)) => {
+            let _ = app.emit("export-progress", serde_json::json!({
+                "status": "complete",
+                "progress": 1.0,
+                "message": format!("Export complete: {}", output.display())
+            }));
+
+            Ok(ExportResult {
+                success: true,
+                output_path: output.to_string_lossy().to_string(),
+                file_count,
+                total_size,
+                message: format!(
+                    "Successfully exported {} files ({} bytes)",
+                    file_count, total_size
+                ),
+            })
+        }
+        Err(e) => {
+            let _ = app.emit("export-progress", serde_json::json!({
+                "status": "error",
+                "progress": 0.0,
+                "message": format!("Export failed: {}", e)
+            }));
+
+            Err(e)
+        }
+    }
+}
+
+/// Helper function to export using ltk_modpkg
+fn export_with_ltk_modpkg(
+    project_path: &Path,
+    output_path: &Path,
+    mod_project: &ModProject,
+) -> Result<(usize, u64), String> {
+    use ltk_modpkg::builder::{ModpkgBuilder, ModpkgChunkBuilder, ModpkgLayerBuilder};
+    use ltk_modpkg::{ModpkgMetadata, ModpkgAuthor};
+    use std::io::Write;
+
+    // Collect all files and their data
+    let content_base = project_path.join("content").join("base");
+    let mut file_map: HashMap<String, Vec<u8>> = HashMap::new();
+    
+    for entry in walkdir::WalkDir::new(&content_base)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().is_file())
+    {
+        let file_path = entry.path();
+        let relative_path = file_path
+            .strip_prefix(&content_base)
+            .map_err(|e| format!("Failed to get relative path: {}", e))?;
+        
+        let file_data = std::fs::read(file_path)
+            .map_err(|e| format!("Failed to read file {}: {}", file_path.display(), e))?;
+        
+        // Normalize path separators and lowercase (modpkg builder lowercases paths internally)
+        let normalized_path = relative_path.to_string_lossy().replace("\\", "/").to_lowercase();
+        file_map.insert(normalized_path, file_data);
+    }
+
+    let file_count = file_map.len();
+
+    // Parse version from string to semver::Version
+    let version = semver::Version::parse(&mod_project.version)
+        .unwrap_or_else(|_| semver::Version::new(1, 0, 0));
+
+    // Create metadata with correct field types
+    let mut metadata = ModpkgMetadata::default();
+    metadata.name = mod_project.name.clone();
+    metadata.display_name = mod_project.display_name.clone();
+    metadata.version = version;
+    metadata.description = if mod_project.description.is_empty() {
+        None
+    } else {
+        Some(mod_project.description.clone())
+    };
+    
+    // Convert authors
+    metadata.authors = mod_project.authors.iter().map(|author| {
+        match author {
+            ltk_mod_project::ModProjectAuthor::Name(name) => ModpkgAuthor::new(name.clone(), None),
+            ltk_mod_project::ModProjectAuthor::Role { name, role } => ModpkgAuthor::new(name.clone(), Some(role.clone())),
+        }
+    }).collect();
+
+    // Build the modpkg - add base layer and chunks
+    let mut builder = ModpkgBuilder::default()
+        .with_metadata(metadata)
+        .map_err(|e| format!("Failed to set metadata: {}", e))?
+        .with_layer(ModpkgLayerBuilder::base());
+
+    // Add all files as chunks
+    for path in file_map.keys() {
+        let chunk = ModpkgChunkBuilder::new()
+            .with_path(path)
+            .map_err(|e| format!("Failed to set chunk path: {}", e))?
+            .with_layer("base");
+        builder = builder.with_chunk(chunk);
+    }
+
+    // Create output file
+    let mut output_file = File::create(output_path)
+        .map_err(|e| format!("Failed to create output file: {}", e))?;
+
+    // Build to writer with data provider closure
+    builder.build_to_writer(&mut output_file, |chunk_builder, cursor| {
+        if let Some(data) = file_map.get(&chunk_builder.path) {
+            cursor.write_all(data)?;
+        }
+        Ok(())
+    })
+    .map_err(|e| format!("Failed to build modpkg: {}", e))?;
+
+    // Get output file size
+    let total_size = std::fs::metadata(output_path)
+        .map(|m| m.len())
+        .unwrap_or(0);
+
+    Ok((file_count, total_size))
+}
+
 /// Simple slugify function
 fn slugify(name: &str) -> String {
     name.chars()

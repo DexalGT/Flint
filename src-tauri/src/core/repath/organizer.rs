@@ -134,9 +134,25 @@ pub fn organize_project(
         repath_result: None,
     };
 
+    // Compute the WAD folder path: content_base/{champion}.wad.client/
+    // This is required for league-mod compatible project structure
+    let champion_lower = config.champion.to_lowercase();
+    let wad_folder_name = format!("{}.wad.client", champion_lower);
+    let wad_base = content_base.join(&wad_folder_name);
+    
+    // Determine which base to use for file operations
+    // Use WAD folder if it exists (new structure), otherwise fall back to content_base (legacy)
+    let file_base = if wad_base.exists() {
+        tracing::info!("Using WAD folder structure: {}", wad_base.display());
+        wad_base.clone()
+    } else {
+        tracing::info!("Using legacy folder structure (no WAD folder found)");
+        content_base.to_path_buf()
+    };
+
     // Step 1: Find the main skin BIN (needed for both concat and repath)
     let main_bin_path = if !config.champion.is_empty() {
-        find_main_skin_bin(content_base, &config.champion, config.target_skin_id)
+        find_main_skin_bin(&file_base, &config.champion, config.target_skin_id)
     } else {
         None
     };
@@ -150,7 +166,7 @@ pub fn organize_project(
                 &config.project_name,
                 &config.creator_name,
                 &config.champion,
-                content_base,
+                &file_base,
                 path_mappings,
             ) {
                 Ok(concat_result) => {
@@ -204,23 +220,63 @@ pub fn organize_project(
 }
 
 /// Find the main skin BIN file for a champion
+/// Now searches inside {champion}.wad.client/ folder for league-mod compatibility
 fn find_main_skin_bin(content_base: &Path, champion: &str, skin_id: u32) -> Option<PathBuf> {
     let champion_lower = champion.to_lowercase();
+    
+    // WAD folder path: content/base/{champion}.wad.client/
+    let wad_folder = format!("{}.wad.client", champion_lower);
+    let wad_path = content_base.join(&wad_folder);
     
     let patterns = vec![
         format!("data/characters/{}/skins/skin{}.bin", champion_lower, skin_id),
         format!("data/characters/{}/skins/skin{:02}.bin", champion_lower, skin_id),
     ];
     
-    // Try direct paths first
+    // First, try searching inside the WAD folder (new structure)
+    if wad_path.exists() {
+        for pattern in &patterns {
+            let direct_path = wad_path.join(pattern);
+            if direct_path.exists() {
+                tracing::debug!("Found main skin BIN in WAD folder: {}", direct_path.display());
+                return Some(direct_path);
+            }
+        }
+        
+        // Fallback: search recursively inside WAD folder
+        for entry in WalkDir::new(&wad_path)
+            .into_iter()
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                e.path()
+                    .extension()
+                    .map(|ext| ext.eq_ignore_ascii_case("bin"))
+                    .unwrap_or(false)
+            })
+        {
+            let path = entry.path();
+            if let Ok(rel_path) = path.strip_prefix(&wad_path) {
+                let rel_str = rel_path.to_string_lossy().to_lowercase().replace('\\', "/");
+                for pattern in &patterns {
+                    if rel_str == *pattern {
+                        tracing::debug!("Found main skin BIN via search: {}", path.display());
+                        return Some(path.to_path_buf());
+                    }
+                }
+            }
+        }
+    }
+    
+    // Legacy fallback: try direct paths (old structure without WAD folder)
     for pattern in &patterns {
         let direct_path = content_base.join(pattern);
         if direct_path.exists() {
+            tracing::debug!("Found main skin BIN (legacy path): {}", direct_path.display());
             return Some(direct_path);
         }
     }
 
-    // Fallback: search for any matching BIN
+    // Final fallback: search anywhere in content_base
     for entry in WalkDir::new(content_base)
         .into_iter()
         .filter_map(|e| e.ok())
@@ -234,14 +290,17 @@ fn find_main_skin_bin(content_base: &Path, champion: &str, skin_id: u32) -> Opti
         let path = entry.path();
         if let Ok(rel_path) = path.strip_prefix(content_base) {
             let rel_str = rel_path.to_string_lossy().to_lowercase().replace('\\', "/");
+            // Check if the path ends with the pattern (ignoring WAD folder prefix)
             for pattern in &patterns {
-                if rel_str == *pattern {
+                if rel_str.ends_with(pattern) {
+                    tracing::debug!("Found main skin BIN (fallback): {}", path.display());
                     return Some(path.to_path_buf());
                 }
             }
         }
     }
 
+    tracing::warn!("Main skin BIN not found for {} skin {}", champion, skin_id);
     None
 }
 

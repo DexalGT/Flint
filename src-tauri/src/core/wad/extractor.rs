@@ -266,15 +266,22 @@ pub fn find_champion_wad(league_path: impl AsRef<Path>, champion: &str) -> Optio
 pub fn extract_skin_assets(
     wad: &mut Wad<File>,
     output_dir: impl AsRef<Path>,
-    _champion: &str,
+    champion: &str,
     _skin_id: u32,
     hashtable: &Hashtable,
 ) -> Result<ExtractionResult> {
     let output_dir = output_dir.as_ref();
     
+    // Create the WAD folder structure: {Champion}.wad.client/
+    // This is required by ltk_fantome for proper fantome/modpkg packing
+    let champion_lower = champion.to_lowercase();
+    let wad_folder_name = format!("{}.wad.client", champion_lower);
+    let wad_output_dir = output_dir.join(&wad_folder_name);
+    
     tracing::info!(
-        "Extracting all assets to: {}",
-        output_dir.display()
+        "Extracting all assets to: {} (WAD folder: {})",
+        output_dir.display(),
+        wad_folder_name
     );
     
     // Create the decoder and get chunks
@@ -335,9 +342,9 @@ pub fn extract_skin_assets(
             let actual_normalized = hash_path.to_string_lossy().to_lowercase().replace('\\', "/");
             path_mappings.insert(original_normalized, actual_normalized);
             
-            output_dir.join(&hash_path)
+            wad_output_dir.join(&hash_path)
         } else {
-            output_dir.join(&final_path)
+            wad_output_dir.join(&final_path)
         };
         
         // Create parent directories

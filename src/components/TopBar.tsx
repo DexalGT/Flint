@@ -5,6 +5,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAppState } from '../lib/state';
 import { getIcon } from '../lib/fileIcons';
+import { save } from '@tauri-apps/plugin-dialog';
+import * as api from '../lib/api';
 
 /**
  * Flint flame logo SVG
@@ -27,8 +29,9 @@ const FlintLogo: React.FC = () => (
 );
 
 export const TopBar: React.FC = () => {
-    const { state, dispatch, openModal } = useAppState();
+    const { state, dispatch, showToast } = useAppState();
     const [dropdownOpen, setDropdownOpen] = useState(false);
+    const [isExporting, setIsExporting] = useState(false);
 
     const handleCloseProject = useCallback(() => {
         if (!state.currentProject) return;
@@ -43,10 +46,49 @@ export const TopBar: React.FC = () => {
         setDropdownOpen(prev => !prev);
     }, []);
 
-    const handleExportAs = useCallback((format: 'fantome' | 'modpkg') => {
+    // Direct export without modal - just opens save dialog
+    const handleExportAs = useCallback(async (format: 'fantome' | 'modpkg') => {
         setDropdownOpen(false);
-        openModal('export', { format });
-    }, [openModal]);
+
+        if (!state.currentProjectPath || !state.currentProject) return;
+
+        const ext = format;
+        const projectName = state.currentProject?.display_name || state.currentProject?.name || 'mod';
+
+        const outputPath = await save({
+            title: `Export as .${ext}`,
+            defaultPath: `${projectName}.${ext}`,
+            filters: [{ name: `${ext.toUpperCase()} Package`, extensions: [ext] }],
+        });
+
+        if (!outputPath) return;
+
+        setIsExporting(true);
+
+        try {
+            const result = await api.exportProject({
+                projectPath: state.currentProjectPath,
+                outputPath,
+                format,
+                champion: state.currentProject.champion,
+                metadata: {
+                    name: state.currentProject.name,
+                    author: state.currentProject.creator || state.creatorName || 'Unknown',
+                    version: state.currentProject.version || '1.0.0',
+                    description: state.currentProject.description || '',
+                },
+            });
+
+            showToast('success', `Exported to ${result.path}`);
+
+        } catch (err) {
+            console.error('Export failed:', err);
+            const flintError = err as api.FlintError;
+            showToast('error', flintError.getUserMessage?.() || 'Export failed');
+        } finally {
+            setIsExporting(false);
+        }
+    }, [state.currentProject, state.currentProjectPath, state.creatorName, showToast]);
 
     // Close dropdown when clicking outside
     useEffect(() => {
@@ -88,22 +130,15 @@ export const TopBar: React.FC = () => {
 
             {/* Actions */}
             <div className="topbar__actions">
-                {/* Settings button */}
-                <button
-                    className="btn btn--ghost btn--icon"
-                    title="Settings"
-                    onClick={() => openModal('settings')}
-                    dangerouslySetInnerHTML={{ __html: getIcon('settings') }}
-                />
-
                 {/* Export dropdown (only visible when project is open) */}
                 {state.currentProject && (
                     <div className={`dropdown ${dropdownOpen ? 'dropdown--open' : ''}`}>
                         <button
                             className="btn btn--primary btn--dropdown"
                             onClick={toggleDropdown}
+                            disabled={isExporting}
                         >
-                            Export Mod
+                            {isExporting ? 'Exporting...' : 'Export Mod'}
                         </button>
                         <div className="dropdown__menu">
                             <button
@@ -119,11 +154,6 @@ export const TopBar: React.FC = () => {
                             >
                                 <span dangerouslySetInnerHTML={{ __html: getIcon('package') }} />
                                 <span>Export as .modpkg</span>
-                            </button>
-                            <div className="dropdown__divider" />
-                            <button className="dropdown__item">
-                                <span dangerouslySetInnerHTML={{ __html: getIcon('settings') }} />
-                                <span>Export Settings...</span>
                             </button>
                         </div>
                     </div>

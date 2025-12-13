@@ -31,6 +31,7 @@
 ### 🔧 **BIN File Editor**
 - Full BIN property file parsing via `ltk_ritobin` / `ltk_meta`
 - Python-like text representation (ritobin format)
+- **VS Code-style syntax highlighting** with bracket pair colorization
 - Pre-conversion of BIN files to `.ritobin` for instant loading
 - Support for all BIN data types:
   - Primitives (bool, i8/u8, i16/u16, i32/u32, i64/u64, f32)
@@ -47,8 +48,9 @@
 
 ### 📤 **Mod Export**
 - Export to `.fantome` format (compatible with cslol-manager) via `ltk_fantome`
-- Export to `.modpkg` format via `ltk_modpkg` *(coming soon)*
+- Export to `.modpkg` format via `ltk_modpkg` (compatible with League Mod Tools)
 - Champion and skin metadata embedding
+- Automatic path normalization for mod manager compatibility
 
 ### 🎨 **Theming System**
 - Customizable color themes via CSS variables
@@ -57,17 +59,29 @@
 
 ---
 
-## 🚧 Temporarily Disabled Features
+## ✅ Advanced Features
 
-> [!WARNING]
-> **The following features are temporarily disabled** pending the release of a stable binary writing tool in the [LeagueToolkit](https://github.com/LeagueToolkit/league-toolkit) Rust crate. Once `ltk_ritobin` supports reliable BIN file writing, these features will be re-enabled.
+> [!NOTE]
+> **The following advanced features are now fully operational** thanks to the stable `ltk_ritobin` and `ltk_meta` crates from [LeagueToolkit](https://github.com/LeagueToolkit/league-toolkit).
 
 | Feature | Status | Description |
 |---------|--------|-------------|
-| **Refather System** | ⏸️ Disabled | Intelligent asset path rewriting for custom skins. Renames asset paths in BIN files to use custom `ASSETS/{Creator}/{Project}/` prefixes. |
-| **BIN Concatenation** | ⏸️ Disabled | Automatic merging of linked BIN files into optimized bundles. Creates `__Concat.bin` and updates main BIN's linked paths. |
+| **Refather System** | ✅ Working | Intelligent asset path rewriting for custom skins. Renames asset paths in BIN files to use custom `ASSETS/{Creator}/{Project}/` prefixes for conflict-free mod loading. |
+| **BIN Concatenation** | ✅ Working | Automatic merging of linked BIN files into optimized bundles. Creates `__Concat.bin` and updates main BIN's linked paths for better mod manager compatibility. |
+| **BIN Editing** | ✅ Working | Full read/write support for BIN files with syntax-highlighted editor. Save edited `.ritobin` back to binary `.bin` format. |
 
-These features have full implementations in `src-tauri/src/core/repath/refather.rs` and `src-tauri/src/core/bin/concat.rs` respectively, but are currently bypassed during project creation to prevent BIN file corruption issues.
+These features are implemented in `src-tauri/src/core/repath/refather.rs` and `src-tauri/src/core/bin/concat.rs` respectively, providing full compatibility with league-mod tooling.
+
+---
+
+## 🗺️ Roadmap
+
+| Feature | Status | Description |
+|---------|--------|-------------|
+| **SKN/SKL 3D Preview** | 🔜 Planned | In-app 3D model viewer for champion skin meshes and skeletons |
+| **Sound Bank Editing** | 🔜 Planned | BNK/WPK audio file preview and editing support |
+| **Animation Preview** | 🔜 Planned | ANM file playback on 3D models |
+| **Batch Export** | 🔜 Planned | Export multiple projects at once |
 
 ---
 

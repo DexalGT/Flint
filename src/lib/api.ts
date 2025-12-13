@@ -390,10 +390,19 @@ export async function validateAssets(
 // Export Commands
 // =============================================================================
 
+interface ExportMetadata {
+    name: string;
+    author: string;
+    version: string;
+    description: string;
+}
+
 interface ExportParams {
     projectPath: string;
     outputPath: string;
     format: 'fantome' | 'modpkg';
+    champion: string;
+    metadata: ExportMetadata;
 }
 
 export async function exportProject(params: ExportParams): Promise<{ path: string }> {
@@ -401,8 +410,12 @@ export async function exportProject(params: ExportParams): Promise<{ path: strin
         return invokeCommand('export_fantome', {
             projectPath: params.projectPath,
             outputPath: params.outputPath,
+            champion: params.champion,
+            metadata: params.metadata,
+            autoRepath: true,
         });
     }
+    // modpkg format
     return invokeCommand('export_modpkg', {
         projectPath: params.projectPath,
         outputPath: params.outputPath,

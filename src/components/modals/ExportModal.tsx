@@ -26,7 +26,7 @@ export const ExportModal: React.FC = () => {
     }, [modalOptions]);
 
     const handleExport = async () => {
-        if (!state.currentProjectPath) return;
+        if (!state.currentProjectPath || !state.currentProject) return;
 
         const ext = format === 'fantome' ? 'fantome' : 'modpkg';
         const projectName = state.currentProject?.display_name || state.currentProject?.name || 'mod';
@@ -47,6 +47,13 @@ export const ExportModal: React.FC = () => {
                 projectPath: state.currentProjectPath,
                 outputPath,
                 format,
+                champion: state.currentProject.champion,
+                metadata: {
+                    name: state.currentProject.name,
+                    author: state.currentProject.creator || state.creatorName || 'Unknown',
+                    version: state.currentProject.version || '1.0.0',
+                    description: state.currentProject.description || '',
+                },
             });
 
             showToast('success', `Exported to ${result.path}`);

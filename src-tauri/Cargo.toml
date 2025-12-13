@@ -71,6 +71,7 @@ binrw = "0.14"
 toml = "0.8"
 slug = "0.1"
 itertools = "0.14"
+semver = "1.0"
 
 # Windows registry access (Windows only)
 [target.'cfg(windows)'.dependencies]

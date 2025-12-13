@@ -64,6 +64,22 @@ pub fn repath_project(
         )));
     }
 
+    // Compute the WAD folder path: content_base/{champion}.wad.client/
+    // This is required for league-mod compatible project structure
+    let champion_lower = config.champion.to_lowercase();
+    let wad_folder_name = format!("{}.wad.client", champion_lower);
+    let wad_base = content_base.join(&wad_folder_name);
+    
+    // Determine which base to use for file operations
+    // Use WAD folder if it exists (new structure), otherwise fall back to content_base (legacy)
+    let file_base = if wad_base.exists() {
+        tracing::info!("Using WAD folder structure: {}", wad_base.display());
+        &wad_base
+    } else {
+        tracing::info!("Using legacy folder structure (no WAD folder found)");
+        content_base
+    };
+
     let mut result = RepathResult {
         bins_processed: 0,
         paths_modified: 0,
@@ -72,9 +88,9 @@ pub fn repath_project(
         missing_paths: Vec::new(),
     };
 
-    // Step 0: Find the main skin BIN
+    // Step 0: Find the main skin BIN (now using file_base)
     let main_bin_path = if !config.champion.is_empty() {
-        find_main_skin_bin(content_base, &config.champion, config.target_skin_id)
+        find_main_skin_bin(file_base, &config.champion, config.target_skin_id)
     } else {
         None
     };
@@ -97,7 +113,7 @@ pub fn repath_project(
                         .cloned()
                         .unwrap_or_else(|| normalized_path.clone());
                     
-                    let full_path = content_base.join(&actual_path);
+                    let full_path = file_base.join(&actual_path);
                     if full_path.exists() {
                         bin_files.push(full_path);
                     } else {
@@ -108,7 +124,7 @@ pub fn repath_project(
         }
     } else {
         tracing::warn!("No main skin BIN found, falling back to scanning all BINs");
-        bin_files = WalkDir::new(content_base)
+        bin_files = WalkDir::new(file_base)
             .into_iter()
             .filter_map(|e| e.ok())
             .filter(|e| {
@@ -140,7 +156,7 @@ pub fn repath_project(
     let existing_paths: HashSet<String> = all_asset_paths
         .iter()
         .filter(|path| {
-            let full_path = content_base.join(path);
+            let full_path = file_base.join(path);
             if full_path.exists() {
                 return true;
             }
@@ -198,18 +214,18 @@ pub fn repath_project(
     }
 
     // Step 5: Relocate asset files
-    result.files_relocated = relocate_assets(content_base, &existing_paths, &prefix)?;
+    result.files_relocated = relocate_assets(file_base, &existing_paths, &prefix)?;
 
     // Step 6: Clean up unused files
     if config.cleanup_unused {
-        result.files_removed = cleanup_unused_files(content_base, &existing_paths, &prefix)?;
+        result.files_removed = cleanup_unused_files(file_base, &existing_paths, &prefix)?;
     }
 
     // Step 7: Clean up irrelevant extracted BINs
-    cleanup_irrelevant_bins(content_base, &config.champion, config.target_skin_id)?;
+    cleanup_irrelevant_bins(file_base, &config.champion, config.target_skin_id)?;
 
     // Step 8: Clean up empty directories
-    cleanup_empty_dirs(content_base)?;
+    cleanup_empty_dirs(file_base)?;
 
     tracing::info!(
         "Repathing complete: {} bins, {} paths modified, {} files relocated",
@@ -442,22 +458,24 @@ fn cleanup_unused_files(content_base: &Path, referenced_paths: &HashSet<String>,
     Ok(removed)
 }
 
-/// Remove irrelevant extracted BINs:
-/// 1. Champion Root BIN ({Champion}.bin) - always removed as we link to original
-/// 2. Unused Animation Bins - keep only the one matching target skin ID
+/// Remove all extracted BINs except:
+/// 1. Main skin BIN (skins/skin{ID}.bin)
+/// 2. Animation BIN (animations/skin{ID}.bin) 
+/// 3. Concat BIN (__Concat.bin)
+/// 
+/// This uses a whitelist approach - everything else is deleted.
 fn cleanup_irrelevant_bins(content_base: &Path, champion: &str, target_skin_id: u32) -> Result<usize> {
     let mut removed = 0;
     let champion_lower = champion.to_lowercase();
-    let root_bin_name = format!("{}.bin", champion_lower);
     
-    // Patterns for animation bins: "Skin{ID}.bin" with various formats
-    let target_anim_name = format!("skin{}.bin", target_skin_id);
-    let target_anim_name_padded = format!("skin{:02}.bin", target_skin_id);
+    // Patterns for BINs we want to KEEP
+    let target_skin_name = format!("skin{}.bin", target_skin_id);
+    let target_skin_name_padded = format!("skin{:02}.bin", target_skin_id);
 
     tracing::info!(
-        "Cleaning up irrelevant BINs (keeping animation: {} or {})",
-        target_anim_name,
-        target_anim_name_padded
+        "Cleaning up BINs (keeping only: {}, {}, and __Concat.bin)",
+        target_skin_name,
+        target_skin_name_padded
     );
 
     for entry in WalkDir::new(content_base)
@@ -475,89 +493,52 @@ fn cleanup_irrelevant_bins(content_base: &Path, champion: &str, target_skin_id: 
             let rel_str = rel_path.to_string_lossy().to_lowercase().replace('\\', "/");
             let filename = path.file_name().unwrap_or_default().to_string_lossy().to_lowercase();
 
-            // Skip if it's the concatenated BIN we just made
+            // === WHITELIST: BINs we KEEP ===
+            
+            // 1. Keep the concatenated BIN
             if filename.contains("__concat") {
+                tracing::debug!("Keeping concat BIN: {}", rel_str);
                 continue;
             }
 
-            // Skip the main skin BIN we're working with
-            if filename == target_anim_name || filename == target_anim_name_padded {
-                // Check if this is in skins folder (main BIN) - keep it
-                if rel_str.contains("/skins/") {
-                    continue;
-                }
+            // 2. Keep the main skin BIN in skins folder
+            if rel_str.contains("/skins/") && 
+               (filename == target_skin_name || filename == target_skin_name_padded) {
+                tracing::debug!("Keeping main skin BIN: {}", rel_str);
+                continue;
             }
 
-            let category = classify_bin(&rel_str);
-            let mut should_remove = false;
-            let mut reason = "";
-
-            match category {
-                BinCategory::ChampionRoot => {
-                    should_remove = true;
-                    reason = "champion root";
-                },
-                BinCategory::Animation => {
-                    // Remove if it doesn't match target skin ID
-                    if filename != target_anim_name && filename != target_anim_name_padded {
-                        should_remove = true;
-                        reason = "wrong animation skin";
-                    }
-                },
-                BinCategory::LinkedData => {
-                    // Check for misplaced root bin in Type 3 folders
-                    if filename == root_bin_name {
-                        should_remove = true;
-                        reason = "misplaced champion root";
-                    }
-                    
-                    // Check if this is a skin BIN in skins folder (e.g., skins/skin1.bin)
-                    if rel_str.contains("/skins/") && filename.starts_with("skin") && filename.ends_with(".bin") {
-                        let name_without_ext = filename.trim_end_matches(".bin");
-                        let num_part = name_without_ext.trim_start_matches("skin");
-                        
-                        if num_part.chars().all(|c| c.is_ascii_digit()) {
-                            if let Ok(skin_num) = num_part.parse::<u32>() {
-                                if skin_num != target_skin_id {
-                                    should_remove = true;
-                                    reason = "wrong skin BIN";
-                                }
-                            }
-                        }
-                    }
-                    
-                    // Check if this is a combined skin data BIN (e.g., katarina_skins_skin0_skins_skin1...bin)
-                    // These are the big linked BINs that contain data for multiple skins
-                    // We only keep these if they were referenced by our target skin (and already concatenated)
-                    if filename.contains("_skins_") || filename.contains("_skin") {
-                        // This is a combined skin data file - check if it matches our concat pattern
-                        let is_our_concat = filename.contains("__concat");
-                        if !is_our_concat {
-                            // It's a linked skin data BIN that wasn't our concat - remove it
-                            should_remove = true;
-                            reason = "unreferenced skin data BIN";
-                        }
-                    }
-                },
-                BinCategory::Ignore => {
-                    should_remove = true;
-                    reason = "ignored/corrupt";
-                }
+            // 3. Keep the animation BIN for the target skin
+            if rel_str.contains("/animations/") && 
+               (filename == target_skin_name || filename == target_skin_name_padded) {
+                tracing::debug!("Keeping animation BIN: {}", rel_str);
+                continue;
             }
 
-            if should_remove {
-                if let Err(e) = fs::remove_file(path) {
-                    tracing::warn!("Failed to remove {} BIN {}: {}", reason, path.display(), e);
-                } else {
-                    tracing::debug!("Removed {} BIN: {}", reason, rel_str);
-                    removed += 1;
-                }
+            // === EVERYTHING ELSE IS DELETED ===
+            let reason = if rel_str.contains("/animations/") {
+                "wrong animation"
+            } else if rel_str.contains("/skins/") {
+                "wrong skin"
+            } else if filename == format!("{}.bin", champion_lower) {
+                "champion root"
+            } else if filename.contains("_skins_") || filename.contains("_skin") {
+                "linked data"
+            } else {
+                "unreferenced"
+            };
+
+            if let Err(e) = fs::remove_file(path) {
+                tracing::warn!("Failed to remove {} BIN {}: {}", reason, path.display(), e);
+            } else {
+                tracing::debug!("Removed {} BIN: {}", reason, rel_str);
+                removed += 1;
             }
         }
     }
     
     if removed > 0 {
-        tracing::info!("Cleaned up {} irrelevant extracted BIN files", removed);
+        tracing::info!("Cleaned up {} irrelevant BIN files", removed);
     }
     
     Ok(removed)
