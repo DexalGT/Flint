@@ -4,6 +4,8 @@
 //! wrapping their APIs for use throughout the application.
 
 use std::io::Cursor;
+use std::sync::OnceLock;
+use parking_lot::RwLock;
 use ltk_meta::{BinTree, BinTreeObject, BinProperty, BinPropertyKind, PropertyValueEnum};
 
 /// Maximum allowed BIN file size (50MB - no legitimate BIN should be larger)
@@ -211,13 +213,39 @@ pub fn load_bin_hashes() -> HashMapProvider {
     hashes
 }
 
+/// Global cache for BIN hash provider - loaded once, reused for all conversions
+/// This eliminates the massive overhead of loading hash files for every BIN conversion
+static BIN_HASHES_CACHE: OnceLock<RwLock<HashMapProvider>> = OnceLock::new();
+
+/// Get or initialize the cached BIN hash provider
+/// 
+/// This is thread-safe and will only load hashes from disk once.
+/// All subsequent calls return the cached version.
+pub fn get_cached_bin_hashes() -> &'static RwLock<HashMapProvider> {
+    BIN_HASHES_CACHE.get_or_init(|| {
+        tracing::info!("Initializing global BIN hash cache...");
+        let hashes = load_bin_hashes();
+        tracing::info!("Global BIN hash cache initialized with {} hashes", hashes.total_count());
+        RwLock::new(hashes)
+    })
+}
+
+/// Convert a BinTree to ritobin text format using the cached hash provider
+/// 
+/// This is the preferred method for BIN conversion as it reuses the globally
+/// cached hash provider instead of loading from disk each time.
+pub fn tree_to_text_cached(tree: &BinTree) -> Result<String> {
+    let hashes = get_cached_bin_hashes().read();
+    tree_to_text_with_hashes(tree, &*hashes)
+}
+
 /// Convert a BinTree to ritobin text format with automatic hash loading
 ///
-/// This is a convenience function that loads BIN hashes and converts the tree.
-/// Use this for user-facing conversions where resolved names are desired.
+/// **DEPRECATED**: Use `tree_to_text_cached()` instead for better performance.
+/// This function is kept for backwards compatibility but now uses the cache internally.
 pub fn tree_to_text_with_resolved_names(tree: &BinTree) -> Result<String> {
-    let hashes = load_bin_hashes();
-    tree_to_text_with_hashes(tree, &hashes)
+    // Use cached version for performance
+    tree_to_text_cached(tree)
 }
 
 /// Parse ritobin text format to BinTree.

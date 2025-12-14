@@ -48,25 +48,17 @@ pub async fn create_project(
     let league_path_buf = PathBuf::from(&league_path);
     let output_path_buf = PathBuf::from(&output_path);
 
-    // 1. Wait for hashtables to load (up to 10 seconds)
-    tracing::info!("Waiting for hashtables...");
+    // Get hashtable (lazy-loaded on first use)
     let _ = app.emit("project-create-progress", serde_json::json!({
         "phase": "init",
         "message": "Initializing..."
     }));
 
-    let mut hashtable = None;
-    for _ in 0..20 {
-        if let Some(h) = hashtable_state.get_hashtable() {
-            hashtable = Some(h);
-            break;
-        }
-        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-    }
-    
-    let hashtable = hashtable.ok_or_else(|| 
-        "Hashtables are still initializing. Please try again in a few seconds.".to_string()
+    let hashtable = hashtable_state.get_hashtable().ok_or_else(|| 
+        "Failed to load hashtable. Please check that hash files are available.".to_string()
     )?;
+    
+    tracing::info!("Hashtable ready with {} entries", hashtable.len());
 
     // 2. Validate WAD existence before creating project
     let wad_path = find_champion_wad(&league_path_buf, &champion)
@@ -304,6 +296,9 @@ pub async fn list_project_files(project_path: String) -> Result<serde_json::Valu
 /// Pre-convert all BIN files in a project to .ritobin format
 /// This enables instant loading when the user opens BIN files later
 ///
+/// Uses parallel processing with rayon for maximum performance.
+/// BIN hashes are cached globally to avoid repeated disk I/O.
+///
 /// # Arguments
 /// * `project_path` - Path to the project directory
 /// * `app` - Tauri app handle for emitting progress events
@@ -317,6 +312,9 @@ pub async fn preconvert_project_bins(
     app: tauri::AppHandle,
 ) -> Result<usize, String> {
     use std::fs;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    use rayon::prelude::*;
     use walkdir::WalkDir;
     
     tracing::info!("Pre-converting BIN files in project: {}", project_path);
@@ -325,6 +323,12 @@ pub async fn preconvert_project_bins(
     if !path.exists() {
         return Err(format!("Project path does not exist: {}", project_path));
     }
+    
+    // Pre-warm the hash cache before parallel processing
+    // This ensures the cache is initialized on the main thread before workers access it
+    tracing::info!("Pre-warming BIN hash cache...");
+    let _ = crate::core::bin::get_cached_bin_hashes();
+    tracing::info!("Hash cache ready");
     
     // Find all .bin files
     let bin_files: Vec<_> = WalkDir::new(&path)
@@ -374,52 +378,81 @@ pub async fn preconvert_project_bins(
         "status": "starting"
     }));
     
-    let mut converted = 0;
-    
-    for (i, bin_path) in bin_files.iter().enumerate() {
-        let ritobin_path = format!("{}.ritobin", bin_path.display());
-        let ritobin_file = std::path::Path::new(&ritobin_path);
-        
-        // Skip if already converted and up-to-date
-        if ritobin_file.exists() {
-            if let (Ok(bin_meta), Ok(ritobin_meta)) = (fs::metadata(bin_path), fs::metadata(ritobin_file)) {
-                if let (Ok(bin_time), Ok(ritobin_time)) = (bin_meta.modified(), ritobin_meta.modified()) {
-                    if ritobin_time >= bin_time {
-                        tracing::debug!("Skipping already converted: {}", bin_path.display());
-                        continue;
+    // Filter to only files that need conversion (not already up-to-date)
+    let mut cache_hits = 0usize;
+    let files_to_convert: Vec<_> = bin_files.iter()
+        .filter(|bin_path| {
+            let ritobin_path = format!("{}.ritobin", bin_path.display());
+            let ritobin_file = std::path::Path::new(&ritobin_path);
+            
+            if ritobin_file.exists() {
+                if let (Ok(bin_meta), Ok(ritobin_meta)) = (fs::metadata(bin_path), fs::metadata(ritobin_file)) {
+                    if let (Ok(bin_time), Ok(ritobin_time)) = (bin_meta.modified(), ritobin_meta.modified()) {
+                        if ritobin_time >= bin_time {
+                            tracing::debug!("[PRECONVERT] CACHE HIT - skipping: {}", bin_path.file_name().unwrap_or_default().to_string_lossy());
+                            return false;
+                        } else {
+                            tracing::debug!("[PRECONVERT] CACHE STALE - will convert: {}", bin_path.file_name().unwrap_or_default().to_string_lossy());
+                        }
                     }
                 }
+            } else {
+                tracing::debug!("[PRECONVERT] NO CACHE - will convert: {}", bin_path.file_name().unwrap_or_default().to_string_lossy());
             }
-        }
+            true
+        })
+        .cloned()
+        .collect();
+    
+    cache_hits = total - files_to_convert.len();
+    let to_convert_count = files_to_convert.len();
+    tracing::info!("[PRECONVERT] {} files need conversion, {} CACHE HITS (already up-to-date)", 
+        to_convert_count, cache_hits);
+    
+    // Atomic counter for thread-safe progress tracking
+    let converted = Arc::new(AtomicUsize::new(0));
+    let failed = Arc::new(AtomicUsize::new(0));
+    
+    // Process in batches to control peak memory usage
+    const BATCH_SIZE: usize = 50;
+    
+    for (batch_idx, batch) in files_to_convert.chunks(BATCH_SIZE).enumerate() {
+        let batch_start = batch_idx * BATCH_SIZE;
         
-        // Get filename for progress display
-        let filename = bin_path.file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| "unknown".to_string());
-        
-        // Emit progress
+        // Emit progress for batch start
         let _ = app.emit("bin-convert-progress", serde_json::json!({
-            "current": i + 1,
-            "total": total,
-            "file": filename,
+            "current": batch_start,
+            "total": to_convert_count,
+            "file": format!("Batch {}/{}", batch_idx + 1, (to_convert_count + BATCH_SIZE - 1) / BATCH_SIZE),
             "status": "converting"
         }));
         
-        // Convert the file
-        let bin_path_str = bin_path.to_string_lossy().to_string();
+        // Process batch in parallel using rayon
+        let converted_clone = Arc::clone(&converted);
+        let failed_clone = Arc::clone(&failed);
         
-        tracing::debug!("Starting conversion for: {}", bin_path.display());
+        batch.par_iter().for_each(|bin_path| {
+            let bin_path_str = bin_path.to_string_lossy().to_string();
+            
+            match convert_bin_file_sync(&bin_path_str) {
+                Ok(_) => {
+                    converted_clone.fetch_add(1, Ordering::Relaxed);
+                    tracing::debug!("Converted: {}", bin_path.display());
+                }
+                Err(e) => {
+                    failed_clone.fetch_add(1, Ordering::Relaxed);
+                    tracing::warn!("Failed to convert {}: {}", bin_path.display(), e);
+                }
+            }
+        });
         
-        match convert_bin_file(&bin_path_str).await {
-            Ok(_) => {
-                converted += 1;
-                tracing::debug!("Converted: {}", bin_path.display());
-            }
-            Err(e) => {
-                tracing::warn!("Failed to convert {}: {}", bin_path.display(), e);
-            }
-        }
+        // Log batch completion
+        let current_converted = converted.load(Ordering::Relaxed);
+        tracing::info!("Batch {} complete: {} converted so far", batch_idx + 1, current_converted);
     }
+    
+    let final_converted = converted.load(Ordering::Relaxed);
+    let final_failed = failed.load(Ordering::Relaxed);
     
     // Emit completion
     let _ = app.emit("bin-convert-progress", serde_json::json!({
@@ -429,31 +462,25 @@ pub async fn preconvert_project_bins(
         "status": "complete"
     }));
     
-    tracing::info!("Pre-converted {} BIN files", converted);
-    Ok(converted)
+    tracing::info!("Pre-converted {} BIN files ({} failed, {} skipped)", 
+        final_converted, final_failed, total - to_convert_count);
+    Ok(final_converted)
 }
 
-/// Helper function to convert a single BIN file to ritobin
-async fn convert_bin_file(bin_path: &str) -> Result<(), String> {
+/// Synchronous helper function to convert a single BIN file to ritobin
+/// Used by parallel processing (rayon doesn't work well with async)
+fn convert_bin_file_sync(bin_path: &str) -> Result<(), String> {
     use std::fs;
-    use std::io::Write;
-    use crate::core::bin::{read_bin_ltk, tree_to_text_with_resolved_names, MAX_BIN_SIZE};
-    
-    // CRITICAL: Use println + flush to GUARANTEE visibility before crash
-    println!("[BIN] Converting: {}", bin_path);
-    let _ = std::io::stdout().flush();
+    use crate::core::bin::{read_bin_ltk, tree_to_text_cached, MAX_BIN_SIZE};
     
     // Check file size before reading to avoid loading huge corrupt files
     let metadata = fs::metadata(bin_path)
         .map_err(|e| format!("Failed to get file metadata for '{}': {}", bin_path, e))?;
     
     let file_size = metadata.len() as usize;
-    println!("[BIN] Size: {} bytes", file_size);
-    let _ = std::io::stdout().flush();
     
     // Reject suspiciously large files (using the same limit as ltk_bridge)
     if file_size > MAX_BIN_SIZE {
-        println!("[BIN] REJECTED: File too large!");
         return Err(format!(
             "BIN file too large ({} bytes, max {} bytes) - likely corrupt, skipping: {}",
             file_size, MAX_BIN_SIZE, bin_path
@@ -463,39 +490,24 @@ async fn convert_bin_file(bin_path: &str) -> Result<(), String> {
     let data = fs::read(bin_path)
         .map_err(|e| format!("Failed to read file '{}': {}", bin_path, e))?;
 
-    // Log magic bytes for debugging - ALWAYS visible
-    if data.len() >= 16 {
-        println!(
-            "[BIN] First 16 bytes: {:02x?}",
-            &data[..16]
-        );
-    } else {
-        println!("[BIN] File too small: only {} bytes", data.len());
-    }
-    let _ = std::io::stdout().flush();
-
-    println!("[BIN] Parsing...");
-    let _ = std::io::stdout().flush();
-    
     let bin = read_bin_ltk(&data)
         .map_err(|e| format!("Failed to parse bin file '{}': {}", bin_path, e))?;
 
-    println!(
-        "[BIN] Parsed OK: {} objects, {} deps",
-        bin.objects.len(),
-        bin.dependencies.len()
-    );
-    let _ = std::io::stdout().flush();
-
-    // Use hash resolution for proper name output (loads hashes automatically)
-    let text = tree_to_text_with_resolved_names(&bin)
+    // Use cached hash resolution for performance
+    let text = tree_to_text_cached(&bin)
         .map_err(|e| format!("Failed to convert to text for '{}': {}", bin_path, e))?;
 
     let ritobin_path = format!("{}.ritobin", bin_path);
     fs::write(&ritobin_path, &text)
         .map_err(|e| format!("Failed to write ritobin '{}': {}", ritobin_path, e))?;
 
-    println!("[BIN] Done: {}", ritobin_path);
-
     Ok(())
 }
+
+/// Async helper function to convert a single BIN file to ritobin (legacy)
+/// Kept for backwards compatibility with single-file conversion commands
+async fn convert_bin_file(bin_path: &str) -> Result<(), String> {
+    // Delegate to sync version since it's now more efficient
+    convert_bin_file_sync(bin_path)
+}
+

@@ -37,17 +37,16 @@ fn main() {
                     .join("hashes")
             });
             
-            tracing::info!("Using hash directory: {}", hash_dir.display());
+            tracing::info!("Hash directory: {}", hash_dir.display());
             
+            // Set the hash directory for lazy loading (hashtable will load on first use)
             let hashtable_state = app.state::<HashtableState>().inner().clone();
-            let hash_dir_for_spawn = hash_dir.clone();
+            hashtable_state.set_hash_dir(hash_dir.clone());
             
-            // Spawn background task to download/load hashes
+            // Spawn background task to download hashes (but NOT load them - lazy loading handles that)
             tauri::async_runtime::spawn(async move {
-                // Always try to download/update hashes at startup
-                // The downloader will skip files that are less than 24 hours old
                 tracing::info!("Checking for hash updates...");
-                match core::hash::download_hashes(&hash_dir_for_spawn, false).await {
+                match core::hash::download_hashes(&hash_dir, false).await {
                     Ok(stats) => {
                         if stats.downloaded > 0 {
                             tracing::info!(
@@ -55,21 +54,14 @@ fn main() {
                                 stats.downloaded, stats.skipped
                             );
                         } else {
-                            tracing::info!("Hashes up-to-date ({} files)", stats.skipped);
+                            tracing::debug!("Hashes up-to-date ({} files)", stats.skipped);
                         }
                     }
                     Err(e) => {
                         tracing::warn!("Failed to update hashes (will use existing): {}", e);
                     }
                 }
-                
-                // Now initialize/reload the hashtable
-                if let Err(e) = hashtable_state.init(hash_dir_for_spawn.clone()) {
-                    tracing::warn!("Failed to initialize hashtable: {}", e);
-                } else {
-                    let count = hashtable_state.len();
-                    tracing::info!("Hashtable initialized with {} hashes", count);
-                }
+                // NOTE: Hashtable is NOT loaded here anymore - lazy loading on first use
             });
             
             Ok(())

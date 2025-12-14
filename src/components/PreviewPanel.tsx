@@ -68,6 +68,7 @@ export const PreviewPanel: React.FC = () => {
     const [fileInfo, setFileInfo] = useState<FileInfo | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [loading, setLoading] = useState(false);
+    const [imageZoom, setImageZoom] = useState<'fit' | number>('fit');
 
     const selectedFile = state.selectedFile;
     const projectPath = state.currentProjectPath;
@@ -130,7 +131,7 @@ export const PreviewPanel: React.FC = () => {
 
         // Choose preview component based on file type
         if (fileInfo.file_type.startsWith('image/')) {
-            return <ImagePreview filePath={filePath} />;
+            return <ImagePreview filePath={filePath} zoom={imageZoom} onZoomChange={setImageZoom} />;
         }
 
         if (fileInfo.extension === 'bin' || fileInfo.file_type === 'application/x-bin') {
@@ -154,9 +155,24 @@ export const PreviewPanel: React.FC = () => {
             <div className="preview-panel__toolbar">
                 {isImage && (
                     <div className="preview-panel__zoom-controls">
-                        <button className="btn btn--sm">Fit</button>
-                        <button className="btn btn--sm">100%</button>
-                        <button className="btn btn--sm">200%</button>
+                        <button
+                            className={`btn btn--sm ${imageZoom === 'fit' ? 'btn--active' : ''}`}
+                            onClick={() => setImageZoom('fit')}
+                        >
+                            Fit
+                        </button>
+                        <button
+                            className={`btn btn--sm ${imageZoom === 1 ? 'btn--active' : ''}`}
+                            onClick={() => setImageZoom(1)}
+                        >
+                            100%
+                        </button>
+                        <button
+                            className={`btn btn--sm ${imageZoom === 2 ? 'btn--active' : ''}`}
+                            onClick={() => setImageZoom(2)}
+                        >
+                            200%
+                        </button>
                     </div>
                 )}
                 <span className="preview-panel__filename">{fileName}</span>

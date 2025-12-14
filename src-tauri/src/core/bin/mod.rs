@@ -9,6 +9,8 @@ pub use ltk_bridge::{
     write_bin as write_bin_ltk,
     tree_to_text,
     tree_to_text_with_resolved_names,
+    tree_to_text_cached,
+    get_cached_bin_hashes,
     text_to_tree,
     HashMapProvider,
     MAX_BIN_SIZE,

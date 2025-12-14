@@ -195,23 +195,6 @@ textarea:focus {
   color: var(--text-primary);
 }
 
-::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
-}
-
-::-webkit-scrollbar-track {
-  background: var(--bg-secondary);
-}
-
-::-webkit-scrollbar-thumb {
-  background: var(--bg-hover);
-  border-radius: 4px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: var(--text-muted);
-}
 
 /* --------------------------------------------------------------------------
    Layout Structure
@@ -394,6 +377,11 @@ textarea:focus {
   margin-left: var(--space-xs);
 }
 
+.btn--active {
+  background-color: var(--accent-primary);
+  color: white;
+}
+
 /* --------------------------------------------------------------------------
    Component: Left Panel / File Tree
    -------------------------------------------------------------------------- */
@@ -422,59 +410,57 @@ textarea:focus {
 .file-tree__item {
   display: flex;
   align-items: center;
-  padding: 0 8px;
+  padding: 0 4px 0 0;
   cursor: pointer;
   transition: background-color var(--transition-fast);
   height: 22px;
   line-height: 22px;
   border-radius: 0;
   margin: 0;
-  border-left: 2px solid transparent;
 }
 
 .file-tree__item:hover {
-  background-color: rgba(255, 255, 255, 0.04);
+  background-color: rgba(220, 80, 80, 0.08);
 }
 
 .file-tree__item--selected {
-  background-color: rgba(88, 166, 255, 0.15);
-  border-left-color: var(--accent-primary);
+  background-color: rgba(220, 80, 80, 0.15);
 }
 
 .file-tree__item--selected:hover {
-  background-color: rgba(88, 166, 255, 0.2);
+  background-color: rgba(220, 80, 80, 0.2);
 }
 
 .file-tree__expander {
-  width: 16px;
-  height: 16px;
+  width: 14px;
+  height: 14px;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  margin-right: 2px;
+  margin-right: 1px;
 }
 
 .file-tree__expander svg {
   display: block;
-  width: 16px;
-  height: 16px;
+  width: 14px;
+  height: 14px;
 }
 
 .file-tree__icon {
-  width: 16px;
-  height: 16px;
+  width: 14px;
+  height: 14px;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  margin-right: 6px;
+  margin-right: 4px;
 }
 
 .file-tree__icon svg {
   display: block;
-  width: 16px;
-  height: 16px;
+  width: 14px;
+  height: 14px;
 }
 
 .file-tree__name {
@@ -1298,7 +1284,7 @@ textarea:focus {
 .image-preview {
   width: 100%;
   height: 100%;
-  overflow: hidden;
+  overflow: auto;
   position: relative;
 }
 
@@ -1312,9 +1298,22 @@ textarea:focus {
   color: var(--text-muted);
 }
 
+.image-preview__error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  gap: var(--space-md);
+  color: var(--error);
+}
+
 .image-preview__container {
-  position: absolute;
-  transform-origin: 0 0;
+  min-width: 100%;
+  min-height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   /* Checkerboard pattern for transparency */
   background-image:
     linear-gradient(45deg, #1a1a2e 25%, transparent 25%),
@@ -1329,6 +1328,7 @@ textarea:focus {
 .image-preview__image {
   display: block;
   max-width: none;
+  flex-shrink: 0;
 }
 
 /* --------------------------------------------------------------------------
@@ -1727,15 +1727,103 @@ textarea:focus {
 .bin-editor__filename {
   font-weight: 500;
   color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+}
+
+.bin-editor__stats {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  font-weight: normal;
 }
 
 .bin-editor__content {
   flex: 1;
-  display: flex;
-  flex-direction: column;
+  position: relative;
   overflow: hidden;
+  background-color: var(--bg-primary);
 }
 
+/* Virtualized list container */
+.bin-editor__virtualized-list {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
+
+/* Virtualized container - scrollable area */
+.bin-editor__virtualized-container {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  overflow: auto;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
+
+/* Larger, more visible scrollbar for BinEditor */
+.bin-editor__virtualized-container::-webkit-scrollbar {
+  width: 14px;
+  height: 14px;
+}
+
+.bin-editor__virtualized-container::-webkit-scrollbar-track {
+  background: var(--bg-secondary);
+  border-left: 1px solid var(--border);
+}
+
+.bin-editor__virtualized-container::-webkit-scrollbar-thumb {
+  background: #555;
+  border: 3px solid var(--bg-secondary);
+  border-radius: 7px;
+}
+
+.bin-editor__virtualized-container::-webkit-scrollbar-thumb:hover {
+  background: #666;
+}
+
+.bin-editor__virtualized-container::-webkit-scrollbar-corner {
+  background: var(--bg-secondary);
+}
+
+/* Spacer for virtualized scrolling - height is set dynamically via inline style */
+.bin-editor__virtualized-spacer {
+  position: relative;
+  min-width: max-content;
+  /* height is set via inline style: totalHeight = lineCount * LINE_HEIGHT */
+}
+
+
+/* Individual row in virtualized list */
+.bin-editor__row {
+  display: inline-flex;
+  min-width: 100%;
+  height: 20px;
+  line-height: 20px;
+}
+
+/* Line number column */
+.bin-editor__line-num {
+  width: 50px;
+  padding: 0 var(--space-sm);
+  background-color: var(--bg-secondary);
+  color: var(--text-muted);
+  text-align: right;
+  user-select: none;
+  flex-shrink: 0;
+  border-right: 1px solid var(--border);
+}
+
+/* Line content column */
+.bin-editor__line-content {
+  flex: 1;
+  padding: 0 var(--space-md);
+  white-space: pre;
+}
+
+/* Legacy wrapper styles (kept for compatibility) */
 .bin-editor__wrapper {
   flex: 1;
   display: flex;
@@ -1751,15 +1839,10 @@ textarea:focus {
   text-align: right;
   user-select: none;
   overflow: hidden;
-  /* Hide scrollbar but allow JS to set scrollTop */
   font-family: var(--font-mono);
   font-size: var(--text-sm);
   line-height: 1.5;
   min-width: 50px;
-}
-
-.bin-editor__line-num {
-  padding-right: var(--space-xs);
 }
 
 /* Code wrapper contains both highlight overlay and textarea */

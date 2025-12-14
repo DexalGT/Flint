@@ -66,14 +66,13 @@ pub async fn get_wad_chunks(
     let reader = WadReader::open(&path)?;
     let chunks = reader.chunks();
     
-    // Get hashtable for path resolution
-    let hashtable_lock = state.0.lock();
-    let hashtable = hashtable_lock.as_ref().map(|h| h.as_ref());
+    // Get hashtable for path resolution (lazy loaded on first use)
+    let hashtable = state.get_hashtable();
     
     let mut chunk_infos = Vec::new();
     
     for (path_hash, chunk) in chunks.iter() {
-        let resolved_path = if let Some(ht) = hashtable {
+        let resolved_path = if let Some(ref ht) = hashtable {
             let resolved = ht.resolve(*path_hash);
             // Only include as resolved if it's not a hex fallback
             if !resolved.starts_with(|c: char| c.is_ascii_hexdigit()) || resolved.len() != 16 {
@@ -118,9 +117,9 @@ pub async fn extract_wad(
 ) -> Result<ExtractionResult, String> {
     let mut reader = WadReader::open(&wad_path)?;
     
-    // Get hashtable for path resolution
-    let hashtable_lock = state.0.lock();
-    let hashtable = hashtable_lock.as_ref().map(|h| h.as_ref());
+    // Get hashtable for path resolution (lazy loaded on first use)
+    let hashtable = state.get_hashtable();
+    let hashtable_ref = hashtable.as_ref().map(|h| h.as_ref());
     
     let mut extracted_count = 0;
     let mut failed_count = 0;
@@ -140,7 +139,7 @@ pub async fn extract_wad(
                 let chunk = reader.get_chunk(path_hash).unwrap();
                 
                 // Resolve the path
-                let resolved_path = if let Some(ht) = hashtable {
+                let resolved_path = if let Some(ht) = hashtable_ref {
                     ht.resolve(path_hash).to_string()
                 } else {
                     format!("{:016x}", path_hash)
@@ -153,7 +152,7 @@ pub async fn extract_wad(
                 let chunk_clone = chunk.clone();
                 
                 // Extract the chunk
-                match extract_chunk(reader.wad_mut(), &chunk_clone, &output_path, hashtable) {
+                match extract_chunk(reader.wad_mut(), &chunk_clone, &output_path, hashtable_ref) {
                     Ok(_) => extracted_count += 1,
                     Err(_) => failed_count += 1,
                 }
@@ -163,7 +162,7 @@ pub async fn extract_wad(
         }
     } else {
         // Extract all chunks
-        match extract_all(reader.wad_mut(), &output_dir, hashtable) {
+        match extract_all(reader.wad_mut(), &output_dir, hashtable_ref) {
             Ok(count) => extracted_count = count,
             Err(e) => return Err(e.into()),
         }

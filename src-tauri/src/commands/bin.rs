@@ -64,12 +64,12 @@ pub async fn convert_bin_to_text(
 
     tracing::debug!("Parsed bin file with {} objects", bin.objects.len());
 
-    // Get hashtable for resolution
-    let hashtable_lock = state.0.lock();
-    let hashtable = hashtable_lock.as_ref().map(|h| h.as_ref());
+    // Get hashtable for resolution (lazy loaded on first use)
+    let hashtable = state.get_hashtable();
+    let hashtable_ref = hashtable.as_ref().map(|h| h.as_ref());
 
     // Convert to text format
-    let text = bin_to_text(&bin, hashtable)
+    let text = bin_to_text(&bin, hashtable_ref)
         .map_err(|e| {
             tracing::error!("Failed to convert to text: {}", e);
             format!("Failed to convert to text: {}", e)
@@ -123,12 +123,12 @@ pub async fn convert_bin_to_json(
     let bin = read_bin(&data)
         .map_err(|e| format!("Failed to parse bin file: {}", e))?;
 
-    // Get hashtable for resolution
-    let hashtable_lock = state.0.lock();
-    let hashtable = hashtable_lock.as_ref().map(|h| h.as_ref());
+    // Get hashtable for resolution (lazy loaded on first use)
+    let hashtable = state.get_hashtable();
+    let hashtable_ref = hashtable.as_ref().map(|h| h.as_ref());
 
     // Convert to JSON format
-    let json = bin_to_json(&bin, hashtable)
+    let json = bin_to_json(&bin, hashtable_ref)
         .map_err(|e| format!("Failed to convert to JSON: {}", e))?;
 
     // Write to output file
@@ -180,12 +180,12 @@ pub async fn convert_text_to_bin(
 
     tracing::debug!("Read {} characters from {}", text.len(), input_path);
 
-    // Get hashtable for conversion
-    let hashtable_lock = state.0.lock();
-    let hashtable = hashtable_lock.as_ref().map(|h| h.as_ref());
+    // Get hashtable for conversion (lazy loaded on first use)
+    let hashtable = state.get_hashtable();
+    let hashtable_ref = hashtable.as_ref().map(|h| h.as_ref());
 
     // Parse text to bin
-    let bin = text_to_bin(&text, hashtable)
+    let bin = text_to_bin(&text, hashtable_ref)
         .map_err(|e| {
             tracing::error!("Failed to parse text from '{}': {}", input_path, e);
             format!("Failed to parse text from '{}': {}", input_path, e)
@@ -244,12 +244,12 @@ pub async fn convert_json_to_bin(
     let json = fs::read_to_string(input)
         .map_err(|e| format!("Failed to read input file: {}", e))?;
 
-    // Get hashtable for conversion
-    let hashtable_lock = state.0.lock();
-    let hashtable = hashtable_lock.as_ref().map(|h| h.as_ref());
+    // Get hashtable for conversion (lazy loaded on first use)
+    let hashtable = state.get_hashtable();
+    let hashtable_ref = hashtable.as_ref().map(|h| h.as_ref());
 
     // Parse JSON to bin
-    let bin = json_to_bin(&json, hashtable)
+    let bin = json_to_bin(&json, hashtable_ref)
         .map_err(|e| format!("Failed to parse JSON: {}", e))?;
 
     // Convert to binary
@@ -334,8 +334,8 @@ pub async fn parse_bin_file_to_text(
 
     tracing::debug!("Parsed bin file with {} objects", bin.objects.len());
 
-    // Convert to text format with automatic hash resolution
-    let text = crate::core::bin::tree_to_text_with_resolved_names(&bin)
+    // Convert to text format using cached hash resolution (faster)
+    let text = crate::core::bin::tree_to_text_cached(&bin)
         .map_err(|e| format!("Failed to convert to text: {}", e))?;
 
     tracing::info!("Successfully parsed BIN file to text ({} chars)", text.len());
@@ -359,7 +359,8 @@ pub async fn read_or_convert_bin(
     bin_path: String,
     _state: State<'_, HashtableState>,
 ) -> Result<String, String> {
-    tracing::info!("Reading or converting BIN file: {}", bin_path);
+    tracing::info!("[BIN_READ] === Starting read_or_convert_bin ===");
+    tracing::info!("[BIN_READ] Path: {}", bin_path);
     
     if bin_path.is_empty() {
         return Err("Path cannot be empty".to_string());
@@ -370,45 +371,68 @@ pub async fn read_or_convert_bin(
         return Err(format!("File does not exist: {}", bin_path));
     }
 
+    // Log .bin file size
+    if let Ok(meta) = fs::metadata(bin_file) {
+        tracing::info!("[BIN_READ] .bin file size: {} bytes", meta.len());
+    }
+
     // Check for cached .ritobin file
     let ritobin_path = format!("{}.ritobin", bin_path);
     let ritobin_file = Path::new(&ritobin_path);
 
     // Check if cache is valid (exists and is newer than .bin)
     if ritobin_file.exists() {
+        tracing::info!("[BIN_READ] Cache file exists: {}", ritobin_path);
+        
         if let (Ok(bin_meta), Ok(ritobin_meta)) = (fs::metadata(bin_file), fs::metadata(ritobin_file)) {
+            tracing::info!("[BIN_READ] Cache file size: {} bytes", ritobin_meta.len());
+            
             if let (Ok(bin_time), Ok(ritobin_time)) = (bin_meta.modified(), ritobin_meta.modified()) {
+                tracing::info!("[BIN_READ] .bin modified: {:?}", bin_time);
+                tracing::info!("[BIN_READ] .ritobin modified: {:?}", ritobin_time);
+                
                 if ritobin_time >= bin_time {
-                    // Cache is valid, read it directly
-                    tracing::info!("Using cached .ritobin file: {}", ritobin_path);
-                    return fs::read_to_string(ritobin_file)
-                        .map_err(|e| format!("Failed to read cached file: {}", e));
+                    // Cache is valid, read it directly - NO CONVERSION!
+                    tracing::info!("[BIN_READ] *** CACHE HIT *** Reading cached file directly");
+                    let content = fs::read_to_string(ritobin_file)
+                        .map_err(|e| format!("Failed to read cached file: {}", e))?;
+                    tracing::info!("[BIN_READ] *** CACHE HIT *** Loaded {} chars from cache", content.len());
+                    return Ok(content);
+                } else {
+                    tracing::info!("[BIN_READ] Cache is STALE (bin is newer)");
                 }
             }
         }
+    } else {
+        tracing::info!("[BIN_READ] No cache file found");
     }
 
     // Cache miss or stale - need to convert
-    tracing::info!("Cache miss, converting BIN file: {}", bin_path);
+    tracing::warn!("[BIN_READ] *** CACHE MISS *** Converting BIN file...");
     
     // Read and parse the binary file
     let data = fs::read(bin_file)
         .map_err(|e| format!("Failed to read file: {}", e))?;
+    tracing::info!("[BIN_READ] Read {} bytes from .bin file", data.len());
 
+    tracing::info!("[BIN_READ] Parsing BIN structure...");
     let bin = crate::core::bin::read_bin_ltk(&data)
         .map_err(|e| format!("Failed to parse bin file: {}", e))?;
+    tracing::info!("[BIN_READ] Parsed: {} objects, {} dependencies", bin.objects.len(), bin.dependencies.len());
 
-    // Convert to text with automatic hash resolution
-    let text = crate::core::bin::tree_to_text_with_resolved_names(&bin)
+    tracing::info!("[BIN_READ] Converting to text (using cached hashes)...");
+    let text = crate::core::bin::tree_to_text_cached(&bin)
         .map_err(|e| format!("Failed to convert to text: {}", e))?;
+    tracing::info!("[BIN_READ] Converted to {} chars of text", text.len());
 
     // Cache the result
     if let Err(e) = fs::write(&ritobin_path, &text) {
-        tracing::warn!("Failed to cache .ritobin file: {}", e);
+        tracing::warn!("[BIN_READ] Failed to cache .ritobin file: {}", e);
     } else {
-        tracing::info!("Cached .ritobin file: {}", ritobin_path);
+        tracing::info!("[BIN_READ] Wrote cache file: {}", ritobin_path);
     }
 
+    tracing::info!("[BIN_READ] === Completed (converted) ===");
     Ok(text)
 }
 

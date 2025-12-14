@@ -11,6 +11,14 @@ pub struct Hashtable {
 }
 
 impl Hashtable {
+    /// Creates an empty Hashtable (for fallback when loading fails or not needed)
+    pub fn empty() -> Self {
+        Self {
+            mappings: HashMap::new(),
+            source_dir: PathBuf::new(),
+        }
+    }
+    
     /// Creates a new Hashtable by loading all .txt files from the specified directory
     /// 
     /// # Arguments

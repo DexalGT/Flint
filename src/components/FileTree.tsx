@@ -104,7 +104,6 @@ const TreeNode: React.FC<TreeNodeProps> = ({
 
     const icon = getFileIcon(node.name, node.isDirectory, isExpanded);
     const expanderIcon = getExpanderIcon(isExpanded);
-    const childCount = node.children?.length || 0;
 
     return (
         <div className="file-tree__node">
@@ -126,9 +125,6 @@ const TreeNode: React.FC<TreeNodeProps> = ({
                     dangerouslySetInnerHTML={{ __html: icon }}
                 />
                 <span className="file-tree__name">{node.name}</span>
-                {node.isDirectory && childCount > 0 && (
-                    <span className="file-tree__count">{childCount}</span>
-                )}
             </div>
             {node.isDirectory && isExpanded && node.children && (
                 <div className="file-tree__children">
