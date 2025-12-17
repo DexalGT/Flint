@@ -91,6 +91,7 @@ pub fn parse_skn_file<P: AsRef<Path>>(path: P) -> anyhow::Result<SknMeshData> {
         });
     
     // Get UV accessor - Texcoord0 is XY_Float32 which maps to Vec2
+    // Pass raw UV coordinates - texture flipY in frontend handles orientation
     let uvs: Vec<[f32; 2]> = vertex_buffer
         .accessor::<Vec2>(ElementName::Texcoord0)
         .map(|acc| acc.iter().map(|v| [v.x, v.y]).collect())

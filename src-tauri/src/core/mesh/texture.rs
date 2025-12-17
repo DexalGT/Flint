@@ -8,7 +8,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::core::bin::ltk_bridge;
-use ltk_meta::{BinTree, PropertyValueEnum};
+use indexmap::IndexMap;
+use ltk_meta::{BinProperty, BinTree, PropertyValueEnum};
 use serde::Serialize;
 
 /// Texture mapping extracted from BIN file
@@ -201,7 +202,7 @@ fn extract_from_value(value: &PropertyValueEnum, mapping: &mut TextureMapping) {
 }
 
 /// Extract a material override entry (submesh → texture)
-fn extract_material_override(props: &HashMap<u32, ltk_meta::BinProperty>, mapping: &mut TextureMapping) {
+fn extract_material_override(props: &IndexMap<u32, BinProperty>, mapping: &mut TextureMapping) {
     let mut submesh: Option<String> = None;
     let mut texture: Option<String> = None;
     let mut material: Option<String> = None;

@@ -65,27 +65,45 @@ const MeshViewer: React.FC<MeshViewerProps> = ({ meshData, visibleMaterials, wir
     const { camera } = useThree();
     const groupRef = useRef<THREE.Group>(null);
 
-    // Create geometry from mesh data
-    const geometry = useMemo(() => {
-        const geo = new THREE.BufferGeometry();
+    // Create per-material geometries by extracting actual triangle data (non-indexed)
+    // This ensures proper UV mapping for each submesh
+    const materialGeometries = useMemo(() => {
+        const geometries: Map<string, THREE.BufferGeometry> = new Map();
 
-        // Set vertex positions
-        const positions = new Float32Array(meshData.positions.flat());
-        geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        meshData.materials.forEach((mat) => {
+            const geo = new THREE.BufferGeometry();
+            const startIdx = mat.start_index;
+            const count = mat.index_count;
 
-        // Set normals
-        const normals = new Float32Array(meshData.normals.flat());
-        geo.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+            // Extract triangles for this material
+            const positions: number[] = [];
+            const normals: number[] = [];
+            const uvs: number[] = [];
 
-        // Set UVs
-        const uvs = new Float32Array(meshData.uvs.flat());
-        geo.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+            for (let i = 0; i < count; i++) {
+                const idx = meshData.indices[startIdx + i];
 
-        // Set indices
-        const indices = new Uint16Array(meshData.indices);
-        geo.setIndex(new THREE.BufferAttribute(indices, 1));
+                // Position
+                const pos = meshData.positions[idx];
+                positions.push(pos[0], pos[1], pos[2]);
 
-        return geo;
+                // Normal
+                const norm = meshData.normals[idx];
+                normals.push(norm[0], norm[1], norm[2]);
+
+                // UV
+                const uv = meshData.uvs[idx];
+                uvs.push(uv[0], uv[1]);
+            }
+
+            geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(positions), 3));
+            geo.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(normals), 3));
+            geo.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(uvs), 2));
+
+            geometries.set(mat.name, geo);
+        });
+
+        return geometries;
     }, [meshData]);
 
     // Create material groups for visibility control
@@ -105,7 +123,12 @@ const MeshViewer: React.FC<MeshViewerProps> = ({ meshData, visibleMaterials, wir
             Object.entries(meshData.textures).forEach(([name, base64]) => {
                 const dataUrl = `data:image/png;base64,${base64}`;
                 const texture = loader.load(dataUrl);
-                texture.flipY = true; // League textures are often flipped
+                // League textures: flipY should be false because League's UV system 
+                // and PNG data are already aligned (both use top-left origin)
+                texture.flipY = false;
+                // Enable repeat wrapping for UVs that extend beyond 0-1 range
+                texture.wrapS = THREE.RepeatWrapping;
+                texture.wrapT = THREE.RepeatWrapping;
                 texture.colorSpace = THREE.SRGBColorSpace;
                 map[name] = texture;
             });
@@ -134,13 +157,9 @@ const MeshViewer: React.FC<MeshViewerProps> = ({ meshData, visibleMaterials, wir
             {materialGroups.map((mat, index) => {
                 if (!mat.visible) return null;
 
-                // Create a sub-geometry for this material range
-                const subGeo = geometry.clone();
-                const startIdx = mat.start_index;
-                const count = mat.index_count;
-
-                // Draw only this material's triangles
-                subGeo.setDrawRange(startIdx, count);
+                // Get the pre-built geometry for this material
+                const subGeo = materialGeometries.get(mat.name);
+                if (!subGeo) return null;
 
                 return (
                     <mesh key={mat.name || index} geometry={subGeo}>
