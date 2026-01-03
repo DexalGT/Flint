@@ -723,6 +723,10 @@ export const ModelPreview: React.FC<ModelPreviewProps> = ({ filePath, meshType =
     const [skeletonData, setSkeletonData] = useState<SklData | null>(null);
     const [showSkeleton, setShowSkeleton] = useState(true);
 
+    // Texture preview state
+    const [hoveredMaterial, setHoveredMaterial] = useState<string | null>(null);
+    const [previewPosition, setPreviewPosition] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+
     // Helper to check if mesh data is SKN type
     const isSknMeshData = (data: MeshData): data is SknMeshData => {
         return Array.isArray((data as SknMeshData).materials) &&
@@ -948,10 +952,10 @@ export const ModelPreview: React.FC<ModelPreviewProps> = ({ filePath, meshType =
                     <directionalLight position={[10, 10, 10]} intensity={1.5} />
                     <directionalLight position={[-10, -10, -10]} intensity={0.6} />
                     <directionalLight position={[0, 10, 0]} intensity={0.4} />
-                    {/* Floor grid for spatial reference */}
+                    {/* Floor grid at Y=0 - renders first so model is on top */}
                     <Grid
-                        position={[0, -1, 0]}
-                        args={[20, 20]}
+                        position={[0, 0, 0]}
+                        args={[30, 30]}
                         cellSize={0.5}
                         cellThickness={0.5}
                         cellColor="#3a3a3a"
@@ -961,6 +965,7 @@ export const ModelPreview: React.FC<ModelPreviewProps> = ({ filePath, meshType =
                         fadeDistance={25}
                         fadeStrength={1}
                         infiniteGrid={true}
+                        renderOrder={-1}
                     />
                     <MeshViewer
                         meshData={meshData}
@@ -1013,8 +1018,20 @@ export const ModelPreview: React.FC<ModelPreviewProps> = ({ filePath, meshType =
                     <div className="model-preview__materials-list">
                         {meshData.materials.map((mat, index) => {
                             const matName = typeof mat === 'string' ? mat : mat.name;
+                            const hasTexture = isSknMeshData(meshData) && meshData.textures && meshData.textures[matName];
                             return (
-                                <label key={matName || index} className="material-toggle">
+                                <label
+                                    key={matName || index}
+                                    className={`material-toggle ${hasTexture ? 'material-toggle--has-texture' : 'material-toggle--no-texture'}`}
+                                    onMouseEnter={(e) => {
+                                        setHoveredMaterial(matName);
+                                        setPreviewPosition({ x: e.clientX, y: e.clientY });
+                                    }}
+                                    onMouseLeave={() => setHoveredMaterial(null)}
+                                    onMouseMove={(e) => {
+                                        setPreviewPosition({ x: e.clientX, y: e.clientY });
+                                    }}
+                                >
                                     <input
                                         type="checkbox"
                                         checked={visibleMaterials.has(matName)}
@@ -1023,16 +1040,59 @@ export const ModelPreview: React.FC<ModelPreviewProps> = ({ filePath, meshType =
                                     <span
                                         className="material-toggle__color"
                                         style={{
-                                            backgroundColor: `hsl(${(index * 222.5) % 360}, 70%, 50%)`
+                                            backgroundColor: hasTexture ? '#4ade80' : '#f87171'
                                         }}
                                     />
                                     <span className="material-toggle__name" title={matName}>
                                         {matName || `Material ${index}`}
                                     </span>
+                                    <span className="material-toggle__status">
+                                        {hasTexture ? '✓' : '✗'}
+                                    </span>
                                 </label>
                             );
                         })}
                     </div>
+
+                    {/* Texture Preview Tooltip - uses shared asset-preview-tooltip styling */}
+                    {hoveredMaterial && isSknMeshData(meshData) && (
+                        <div
+                            className="asset-preview-tooltip"
+                            style={{
+                                position: 'fixed',
+                                left: previewPosition.x - 240,
+                                top: previewPosition.y - 100,
+                                zIndex: 9999,
+                                pointerEvents: 'none'
+                            }}
+                        >
+                            <div className="asset-preview-tooltip__header">
+                                {hoveredMaterial}
+                            </div>
+                            <div className="asset-preview-tooltip__content">
+                                {meshData.textures && meshData.textures[hoveredMaterial] ? (
+                                    <div className="asset-preview-tooltip__texture">
+                                        <img
+                                            src={`data:image/png;base64,${meshData.textures[hoveredMaterial]}`}
+                                            alt={hoveredMaterial}
+                                            style={{
+                                                maxWidth: '180px',
+                                                maxHeight: '160px',
+                                                objectFit: 'contain',
+                                                borderRadius: '4px',
+                                                background: 'repeating-conic-gradient(var(--bg-tertiary) 0% 25%, var(--bg-primary) 0% 50%) 50% / 10px 10px'
+                                            }}
+                                        />
+                                    </div>
+                                ) : (
+                                    <div className="asset-preview-tooltip__error">
+                                        <span className="asset-preview-tooltip__error-icon">🎨</span>
+                                        <span>No texture loaded</span>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    )}
                 </div>
 
                 {/* Animation Controls */}

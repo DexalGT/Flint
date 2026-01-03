@@ -206,6 +206,7 @@ pub async fn read_skn_mesh(path: String) -> Result<SknMeshData, String> {
 /// Tries multiple strategies:
 /// 1. Extract filename and look in base_dir
 /// 2. Try the full ASSETS/ path relative to project root
+/// 3. Search in WAD folders (base/*.wad.client/assets/)
 fn resolve_texture_path(base_dir: &Path, texture_path: &str) -> Option<std::path::PathBuf> {
     // Strategy 1: Just use the filename in the same directory as SKN
     let filename = Path::new(texture_path)
@@ -244,6 +245,130 @@ fn resolve_texture_path(base_dir: &Path, texture_path: &str) -> Option<std::path
     }
     
     None
+}
+
+/// Resolve an asset path (from BIN file) to an actual file path
+/// 
+/// Searches multiple locations:
+/// 1. Same directory as the reference file (bin_path)
+/// 2. WAD folders (content/base/*.wad.client/assets/)
+/// 3. Extracted folder (content/extracted/ASSETS/)
+/// 4. Parent directories
+#[tauri::command]
+pub async fn resolve_asset_path(
+    asset_path: String,
+    bin_path: String
+) -> Result<String, String> {
+    tracing::debug!("Resolving asset path: {} relative to {}", asset_path, bin_path);
+    
+    let bin_path = std::path::Path::new(&bin_path);
+    let base_dir = bin_path.parent().unwrap_or(Path::new("."));
+    
+    // Normalize the asset path (convert forward slashes, remove ASSETS/ prefix)
+    let normalized: String = asset_path.replace('/', std::path::MAIN_SEPARATOR_STR);
+    let stripped = normalized
+        .trim_start_matches("ASSETS\\")
+        .trim_start_matches("ASSETS/")
+        .trim_start_matches("assets\\")
+        .trim_start_matches("assets/");
+    
+    // Find content root by walking up the directory tree
+    let mut content_root: Option<std::path::PathBuf> = None;
+    let mut current = base_dir.to_path_buf();
+    
+    for _ in 0..10 {
+        let base_folder = current.join("base");
+        let extracted_folder = current.join("extracted");
+        
+        if base_folder.exists() || extracted_folder.exists() {
+            content_root = Some(current.clone());
+            break;
+        }
+        
+        // Check if we're inside the content folder
+        if current.file_name().map(|n| n.to_string_lossy().to_lowercase()) == Some("content".to_string()) {
+            content_root = Some(current.clone());
+            break;
+        }
+        
+        if let Some(parent) = current.parent() {
+            current = parent.to_path_buf();
+        } else {
+            break;
+        }
+    }
+    
+    let content_root = content_root.unwrap_or_else(|| base_dir.to_path_buf());
+    tracing::debug!("Content root: {}", content_root.display());
+    
+    // Strategy 1: Look in the same directory
+    let filename = Path::new(&asset_path).file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
+    
+    let same_dir = base_dir.join(&filename);
+    if same_dir.exists() {
+        tracing::debug!("Found in same directory: {}", same_dir.display());
+        return Ok(same_dir.to_string_lossy().to_string());
+    }
+    
+    // Strategy 2: Search in WAD folders (base/*.wad.client/assets/)
+    let base_folder = content_root.join("base");
+    if base_folder.exists() {
+        // Read all wad folders
+        if let Ok(entries) = std::fs::read_dir(&base_folder) {
+            for entry in entries.filter_map(|e| e.ok()) {
+                let wad_name = entry.file_name().to_string_lossy().to_lowercase();
+                if wad_name.ends_with(".wad.client") || wad_name.ends_with(".wad") {
+                    // Check if asset exists in this WAD's assets folder
+                    let wad_asset_path = entry.path()
+                        .join("assets")
+                        .join(stripped);
+                    
+                    tracing::trace!("Checking WAD path: {}", wad_asset_path.display());
+                    if wad_asset_path.exists() {
+                        tracing::debug!("Found in WAD {}: {}", wad_name, wad_asset_path.display());
+                        return Ok(wad_asset_path.to_string_lossy().to_string());
+                    }
+                    
+                    // Also try lowercase version of the path
+                    let lower_path = entry.path()
+                        .join("assets")
+                        .join(stripped.to_lowercase());
+                    
+                    if lower_path.exists() {
+                        tracing::debug!("Found in WAD {} (lowercase): {}", wad_name, lower_path.display());
+                        return Ok(lower_path.to_string_lossy().to_string());
+                    }
+                }
+            }
+        }
+    }
+    
+    // Strategy 3: Search in extracted folder
+    let extracted = content_root.join("extracted").join("ASSETS").join(stripped);
+    if extracted.exists() {
+        tracing::debug!("Found in extracted: {}", extracted.display());
+        return Ok(extracted.to_string_lossy().to_string());
+    }
+    
+    // Strategy 4: Walk up directories
+    let mut search_dir = base_dir.to_path_buf();
+    for _ in 0..5 {
+        let candidate = search_dir.join(stripped);
+        if candidate.exists() {
+            tracing::debug!("Found in parent: {}", candidate.display());
+            return Ok(candidate.to_string_lossy().to_string());
+        }
+        
+        if let Some(parent) = search_dir.parent() {
+            search_dir = parent.to_path_buf();
+        } else {
+            break;
+        }
+    }
+    
+    Err(format!("Asset not found: {} (searched from {})", asset_path, content_root.display()))
 }
 
 use crate::core::mesh::skl::{parse_skl_file, SklData};

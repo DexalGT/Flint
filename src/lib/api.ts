@@ -565,3 +565,14 @@ export async function evaluateAnimation(
 ): Promise<AnimationPose> {
     return invokeCommand('evaluate_animation', { path, basePath, time });
 }
+
+/**
+ * Resolve an asset path from a BIN file to an actual file path
+ * Searches in WAD folders, extracted folders, and parent directories
+ */
+export async function resolveAssetPath(
+    assetPath: string,
+    binPath: string
+): Promise<string> {
+    return invokeCommand('resolve_asset_path', { assetPath, binPath });
+}

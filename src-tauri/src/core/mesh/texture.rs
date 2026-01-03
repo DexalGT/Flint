@@ -40,6 +40,7 @@ pub fn find_skin_bin(skn_path: &Path) -> Option<PathBuf> {
     // Path patterns:
     // .../characters/{champion}/skins/skin{N}/{champion}.skn
     // .../assets/characters/{champion}/skins/skin{N}/{champion}.skn
+    // .../assets/characters/{champion}/skins/base/{champion}.skn  (base = skin0)
     
     let mut champion_name: Option<String> = None;
     let mut skin_folder: Option<String> = None;  // e.g., "skin0", "skin20"
@@ -55,15 +56,19 @@ pub fn find_skin_bin(skn_path: &Path) -> Option<PathBuf> {
         
         // Look for "skins" folder to find structure
         if lower == "skins" && i + 1 < components.len() {
-            // Next component should be skinN folder
+            // Next component should be skinN folder or "base"
             let next = components[i + 1].to_lowercase();
             if next.starts_with("skin") {
                 skin_folder = Some(next.clone());
-                
-                // Champion is typically 2 folders back: characters/{champion}/skins
-                if i >= 2 && components[i - 1].to_lowercase() != "characters" {
-                    champion_name = Some(components[i - 1].to_lowercase());
-                }
+            } else if next == "base" {
+                // "base" folder is equivalent to "skin0"
+                skin_folder = Some("skin0".to_string());
+                tracing::debug!("Detected 'base' folder, treating as skin0");
+            }
+            
+            // Champion is typically 2 folders back: characters/{champion}/skins
+            if i >= 2 && components[i - 1].to_lowercase() != "characters" {
+                champion_name = Some(components[i - 1].to_lowercase());
             }
         }
         
@@ -237,31 +242,35 @@ fn extract_texture_mapping_from_text(content: &str) -> anyhow::Result<TextureMap
                     // Split by "SkinMeshDataProperties_MaterialOverride" 
                     let parts: Vec<&str> = list_content.split("SkinMeshDataProperties_MaterialOverride").collect();
                     
-                    for part in parts {
+                    for (idx, part) in parts.iter().enumerate() {
                         // Check if this part has a submesh definition
                         let submesh_regex = Regex::new(r#"submesh:\s*string\s*=\s*"([^"]+)""#).unwrap();
                         if let Some(sub_captures) = submesh_regex.captures(part) {
                             let submesh_name = sub_captures.get(1).unwrap().as_str().to_string();
+                            tracing::info!("Found materialOverride[{}]: submesh='{}'", idx, submesh_name);
                             
                             // Check for direct texture
                             let tex_regex = Regex::new(r#"texture:\s*string\s*=\s*"([^"]+)""#).unwrap();
                             if let Some(tex_match) = tex_regex.captures(part) {
                                 let tex_path = tex_match.get(1).unwrap().as_str().to_string();
-                                tracing::debug!("Direct texture override: {} -> {}", submesh_name, tex_path);
+                                tracing::info!("  -> Direct texture: {}", tex_path);
                                 mapping.material_overrides.insert(submesh_name.clone(), tex_path);
                                 continue;
                             }
                             
-                            // Check for material link (string)
-                            // material: link = "Characters/..."
-                            let mat_link_regex = Regex::new(r#"material:\s*link\s*=\s*"([^"]+)""#).unwrap();
+                            // Check for material link (string) - CASE INSENSITIVE
+                            // Material: link = "Characters/..." or material: link = "..."
+                            let mat_link_regex = Regex::new(r#"(?i)material:\s*link\s*=\s*"([^"]+)""#).unwrap();
                             if let Some(mat_match) = mat_link_regex.captures(part) {
                                 let mat_path = mat_match.get(1).unwrap().as_str().to_string();
+                                tracing::info!("  -> Material link (string): {}", mat_path);
                                 
                                 // Resolve material link
                                 if let Some(resolved_tex) = resolve_material_texture(content, &mat_path) {
+                                    tracing::info!("  -> RESOLVED to: {}", resolved_tex);
                                     mapping.material_overrides.insert(submesh_name.clone(), resolved_tex);
                                 } else {
+                                    tracing::warn!("  -> FAILED to resolve material link!");
                                     mapping.static_materials.push(format!("Link: {} -> {}", submesh_name, mat_path));
                                 }
                                 continue;
@@ -272,14 +281,20 @@ fn extract_texture_mapping_from_text(content: &str) -> anyhow::Result<TextureMap
                             let mat_hash_regex = Regex::new(r#"material:\s*link\s*=\s*(0x[0-9a-fA-F]+)"#).unwrap();
                             if let Some(hash_match) = mat_hash_regex.captures(part) {
                                 let mat_hash = hash_match.get(1).unwrap().as_str();
+                                tracing::info!("  -> Material link (hash): {}", mat_hash);
                                 
                                 // Try to resolve hex hash to texture
                                 if let Some(resolved_tex) = resolve_material_texture_by_hash(content, mat_hash) {
+                                    tracing::info!("  -> RESOLVED to: {}", resolved_tex);
                                     mapping.material_overrides.insert(submesh_name.clone(), resolved_tex);
                                 } else {
+                                    tracing::warn!("  -> FAILED to resolve material hash!");
                                     mapping.static_materials.push(format!("Hash: {} -> {}", submesh_name, mat_hash));
                                 }
+                                continue;
                             }
+                            
+                            tracing::warn!("  -> No texture or material link found for submesh");
                         }
                     }
                 }
@@ -287,6 +302,7 @@ fn extract_texture_mapping_from_text(content: &str) -> anyhow::Result<TextureMap
         }
     }
     
+    tracing::info!("Final material_overrides count: {}", mapping.material_overrides.len());
     Ok(mapping)
 }
 

@@ -116,6 +116,7 @@ fn main() {
             commands::mesh::read_animation_list,
             commands::mesh::read_animation,
             commands::mesh::evaluate_animation,
+            commands::mesh::resolve_asset_path,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
