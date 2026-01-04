@@ -7,7 +7,7 @@ use std::collections::HashMap;
 
 use crate::core::mesh::skn::{parse_skn_file, SknMeshData};
 use crate::core::mesh::scb::{parse_scb_file, ScbMeshData};
-use crate::core::mesh::texture::{find_skin_bin, extract_texture_mapping, lookup_material_texture_by_name};
+use crate::core::mesh::texture::{find_skin_bin, extract_texture_mapping, lookup_material_texture_by_name, MaterialProperties};
 use crate::commands::file::decode_dds_to_png;
 
 /// Read and parse an SCB (Static Mesh Binary) file
@@ -52,43 +52,45 @@ pub async fn read_skn_mesh(path: String) -> Result<SknMeshData, String> {
         match extract_texture_mapping(&bin_path) {
             Ok(texture_mapping) => {
                 tracing::info!(
-                    "Extracted texture mapping: default={:?}, overrides={:?}", 
+                    "Extracted texture mapping: default={:?}, material_properties={:?}", 
                     texture_mapping.default_texture,
-                    texture_mapping.material_overrides.keys().collect::<Vec<_>>()
+                    texture_mapping.material_properties.keys().collect::<Vec<_>>()
                 );
                 
                 // Get the project/skin directory for resolving texture paths
                 let base_dir = skn_path.parent().unwrap_or(Path::new("."));
                 tracing::debug!("Base dir for texture resolution: {}", base_dir.display());
                 
-                // Collect all texture paths to load (deduplicate by path to avoid loading same texture multiple times)
-                let mut texture_tasks: Vec<(String, std::path::PathBuf)> = Vec::new();
+                // Collect material properties for each material
+                // Track: (material_name, MaterialProperties) and deduplicate by texture path
+                let mut material_props_map: HashMap<String, MaterialProperties> = HashMap::new();
+                let mut texture_tasks: Vec<(String, std::path::PathBuf, Vec<String>)> = Vec::new();
                 let mut path_to_materials: HashMap<String, Vec<String>> = HashMap::new();
                 
                 for material in &mesh_data.materials {
                     let material_name = &material.name;
                     
-                    // Strategy 1: Direct match in material_overrides
-                    let texture_path = texture_mapping.material_overrides
+                    // Strategy 1: Direct match in material_properties
+                    let mat_props = texture_mapping.material_properties
                         .get(material_name)
                         .cloned()
                         // Strategy 2: Strip "mesh_" prefix from SKN material name
                         .or_else(|| {
                             if material_name.starts_with("mesh_") {
                                 let stripped = &material_name[5..];
-                                texture_mapping.material_overrides.get(stripped).cloned()
+                                texture_mapping.material_properties.get(stripped).cloned()
                             } else {
                                 None
                             }
                         })
                         // Strategy 3: Add "mesh_" prefix to SKN material name
                         .or_else(|| {
-                            texture_mapping.material_overrides.get(&format!("mesh_{}", material_name)).cloned()
+                            texture_mapping.material_properties.get(&format!("mesh_{}", material_name)).cloned()
                         })
-                        // Strategy 4: Case-insensitive match in material_overrides
+                        // Strategy 4: Case-insensitive match
                         .or_else(|| {
                             let lower_name = material_name.to_lowercase();
-                            texture_mapping.material_overrides.iter()
+                            texture_mapping.material_properties.iter()
                                 .find(|(k, _)| k.to_lowercase() == lower_name)
                                 .map(|(_, v)| v.clone())
                         })
@@ -100,7 +102,7 @@ pub async fn read_skn_mesh(path: String) -> Result<SknMeshData, String> {
                             } else {
                                 &lower_name
                             };
-                            texture_mapping.material_overrides.iter()
+                            texture_mapping.material_properties.iter()
                                 .find(|(k, _)| k.to_lowercase() == stripped)
                                 .map(|(_, v)| v.clone())
                         })
@@ -119,27 +121,37 @@ pub async fn read_skn_mesh(path: String) -> Result<SknMeshData, String> {
                                 None
                             }
                         })
-                        // Strategy 8: Fallback to default texture
-                        .or_else(|| texture_mapping.default_texture.clone());
+                        // Strategy 8: Fallback to default texture (no UV transforms)
+                        .or_else(|| {
+                            texture_mapping.default_texture.clone().map(|tex| MaterialProperties {
+                                texture_path: tex,
+                                uv_scale: None,
+                                uv_offset: None,
+                                flipbook_size: None,
+                                flipbook_frame: None,
+                            })
+                        });
                     
-                    if let Some(tex_path) = texture_path {
-                        tracing::debug!("Material '{}' resolved to texture: {}", material_name, tex_path);
+                    if let Some(props) = mat_props {
+                        tracing::debug!("Material '{}' resolved to texture: {} (scale={:?}, flipbook={:?})", 
+                            material_name, props.texture_path, props.uv_scale, props.flipbook_size);
                         
-                        // Try to resolve texture path
-                        if let Some(resolved) = resolve_texture_path(base_dir, &tex_path) {
+                        // Store props for this material
+                        material_props_map.insert(material_name.clone(), props.clone());
+                        
+                        // Track for texture loading deduplication
+                        if let Some(resolved) = resolve_texture_path(base_dir, &props.texture_path) {
                             let path_key = resolved.to_string_lossy().to_string();
-                            
-                            // Track which materials use this texture path
                             path_to_materials.entry(path_key.clone())
                                 .or_default()
                                 .push(material_name.clone());
                             
                             // Only add to load list if not already queued
-                            if !texture_tasks.iter().any(|(_, p)| p == &resolved) {
-                                texture_tasks.push((path_key, resolved));
+                            if !texture_tasks.iter().any(|(pk, _, _)| pk == &path_key) {
+                                texture_tasks.push((path_key, resolved, vec![material_name.clone()]));
                             }
                         } else {
-                            tracing::warn!("Texture file not found for '{}': {}", material_name, tex_path);
+                            tracing::warn!("Texture file not found for '{}': {}", material_name, props.texture_path);
                         }
                     } else {
                         tracing::warn!("No texture resolved for material: {}", material_name);
@@ -151,13 +163,12 @@ pub async fn read_skn_mesh(path: String) -> Result<SknMeshData, String> {
                 
                 // Load all textures in parallel
                 let load_futures: Vec<_> = texture_tasks.into_iter()
-                    .map(|(path_key, resolved_path)| {
-                        let path_str = resolved_path.to_string_lossy().to_string();
+                    .map(|(path_key, resolved_path, _)| {
                         async move {
-                            match decode_dds_to_png(path_str.clone()).await {
+                            match decode_dds_to_png(resolved_path.to_string_lossy().to_string()).await {
                                 Ok(decoded) => Some((path_key, decoded.data)),
                                 Err(e) => {
-                                    tracing::warn!("Failed to decode texture {}: {}", path_str, e);
+                                    tracing::warn!("Failed to decode texture {}: {}", resolved_path.display(), e);
                                     None
                                 }
                             }
@@ -167,20 +178,37 @@ pub async fn read_skn_mesh(path: String) -> Result<SknMeshData, String> {
                 
                 let results = futures::future::join_all(load_futures).await;
                 
-                // Build textures map - assign each decoded texture to all materials that use it
-                let mut textures: HashMap<String, String> = HashMap::new();
+                // Build decoded textures lookup
+                let mut decoded_textures: HashMap<String, String> = HashMap::new();
                 for result in results.into_iter().flatten() {
                     let (path_key, data) = result;
-                    if let Some(material_names) = path_to_materials.get(&path_key) {
-                        for mat_name in material_names {
-                            textures.insert(mat_name.clone(), data.clone());
+                    decoded_textures.insert(path_key, data);
+                }
+                
+                // Build material_data with textures AND UV parameters
+                use crate::core::mesh::skn::MaterialData;
+                let mut material_data: HashMap<String, MaterialData> = HashMap::new();
+                
+                for (material_name, props) in material_props_map {
+                    // Find the decoded texture for this material
+                    if let Some(resolved) = resolve_texture_path(base_dir, &props.texture_path) {
+                        let path_key = resolved.to_string_lossy().to_string();
+                        if let Some(texture_data) = decoded_textures.get(&path_key) {
+                            material_data.insert(material_name.clone(), MaterialData {
+                                texture: texture_data.clone(),
+                                uv_scale: props.uv_scale,
+                                uv_offset: props.uv_offset,
+                                flipbook_size: props.flipbook_size,
+                                flipbook_frame: props.flipbook_frame,
+                            });
+                            tracing::debug!("Built MaterialData for '{}' with UV params", material_name);
                         }
                     }
                 }
                 
                 let elapsed = start_time.elapsed();
-                tracing::info!("Loaded {} textures in {:.2}s", textures.len(), elapsed.as_secs_f32());
-                mesh_data.textures = textures;
+                tracing::info!("Loaded {} material_data entries in {:.2}s", material_data.len(), elapsed.as_secs_f32());
+                mesh_data.material_data = material_data;
                 
                 // Log static material TODOs
                 if !texture_mapping.static_materials.is_empty() {

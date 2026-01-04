@@ -29,9 +29,19 @@ interface SknMeshData {
     uvs: [number, number][];
     indices: number[];
     bounding_box: [[number, number, number], [number, number, number]];
-    textures?: Record<string, string>;
+    textures?: Record<string, string>;  // DEPRECATED - use material_data
+    material_data?: Record<string, MaterialData>;  // NEW: textures with UV params
     bone_weights?: [number, number, number, number][];  // 4 bone weights per vertex
     bone_indices?: [number, number, number, number][];  // 4 bone indices per vertex
+}
+
+// Material data with texture and UV transform parameters
+interface MaterialData {
+    texture: string;           // base64 PNG
+    uv_scale?: [number, number];
+    uv_offset?: [number, number];
+    flipbook_size?: [number, number];
+    flipbook_frame?: number;
 }
 
 interface BoneData {
@@ -378,23 +388,74 @@ const MeshViewer: React.FC<MeshViewerProps> = ({ meshData, visibleMaterials, wir
         }
     }, [meshData, visibleMaterials]);
 
-    // Load textures from the backend-provided textures map
+    // Load textures from the backend-provided material_data (with UV transforms)
     const textureCache = useMemo(() => {
         const cache = new Map<string, THREE.Texture>();
+        const textureLoader = new THREE.TextureLoader();
 
-        console.log('=== SKN Texture Loading ===');
+        console.log('=== SKN Material Data Loading ===');
 
         if (isSknMeshDataType(meshData)) {
             console.log('Materials from SKN:', meshData.materials.map(m => m.name));
-            console.log('Textures from backend:', meshData.textures ? Object.keys(meshData.textures) : []);
 
-            if (meshData.textures) {
-                const textureLoader = new THREE.TextureLoader();
+            // Prefer material_data (new) over textures (deprecated)
+            if (meshData.material_data && Object.keys(meshData.material_data).length > 0) {
+                console.log('Material data from backend:', Object.keys(meshData.material_data));
 
-                // Load each texture
+                for (const [materialName, matData] of Object.entries(meshData.material_data)) {
+                    try {
+                        const dataUrl = `data:image/png;base64,${matData.texture}`;
+                        const texture = textureLoader.load(dataUrl);
+
+                        // CRITICAL: Do NOT flip Y - League meshes have reversed normals
+                        texture.flipY = false;
+                        texture.colorSpace = THREE.SRGBColorSpace;
+
+                        // Apply UV transformations from material properties
+                        if (matData.uv_scale) {
+                            texture.repeat.set(matData.uv_scale[0], matData.uv_scale[1]);
+                            console.log(`  UV Scale for "${materialName}": [${matData.uv_scale[0]}, ${matData.uv_scale[1]}]`);
+                        }
+
+                        if (matData.uv_offset) {
+                            texture.offset.set(matData.uv_offset[0], matData.uv_offset[1]);
+                            console.log(`  UV Offset for "${materialName}": [${matData.uv_offset[0]}, ${matData.uv_offset[1]}]`);
+                        }
+
+                        // Handle flipbook materials
+                        if (matData.flipbook_size) {
+                            const [cols, rows] = matData.flipbook_size;
+                            const frame = matData.flipbook_frame || 0;
+
+                            // Calculate which cell to show in the atlas
+                            const col = Math.floor(frame % cols);
+                            const row = Math.floor(frame / cols);
+
+                            // Set repeat to show only one cell
+                            texture.repeat.set(1 / cols, 1 / rows);
+
+                            // Set offset to the correct cell (UV origin is bottom-left)
+                            // For row 0, we want offset.y = 1 - 1/rows (top row)
+                            texture.offset.set(col / cols, 1 - (row + 1) / rows);
+
+                            console.log(`  Flipbook for "${materialName}": ${cols}x${rows} grid, frame ${frame} (cell [${col}, ${row}])`);
+                        }
+
+                        texture.wrapS = THREE.RepeatWrapping;
+                        texture.wrapT = THREE.RepeatWrapping;
+                        texture.needsUpdate = true;
+
+                        cache.set(materialName, texture);
+                        console.log(`✓ Loaded material data for "${materialName}"`);
+                    } catch (error) {
+                        console.warn(`✗ Failed to load material data for "${materialName}":`, error);
+                    }
+                }
+            } else if (meshData.textures) {
+                // Fallback to deprecated textures field for backward compatibility
+                console.log('Using deprecated textures field:', Object.keys(meshData.textures));
                 for (const [materialName, base64Data] of Object.entries(meshData.textures)) {
                     try {
-                        // base64Data is already the base64 string, add data URL prefix
                         const dataUrl = `data:image/png;base64,${base64Data}`;
                         const texture = textureLoader.load(dataUrl);
                         texture.flipY = false;
@@ -403,7 +464,7 @@ const MeshViewer: React.FC<MeshViewerProps> = ({ meshData, visibleMaterials, wir
                         texture.wrapT = THREE.RepeatWrapping;
 
                         cache.set(materialName, texture);
-                        console.log(`✓ Loaded texture for "${materialName}"`);
+                        console.log(`✓ Loaded texture for "${materialName}" (deprecated path)`);
                     } catch (error) {
                         console.warn(`✗ Failed to load texture for "${materialName}":`, error);
                     }
@@ -751,20 +812,57 @@ export const ModelPreview: React.FC<ModelPreviewProps> = ({ filePath, meshType =
                     data = await api.readScbMesh(filePath);
                     console.log('[ModelPreview] Loaded static mesh:', (data as ScbMeshData).name);
                 } else {
-                    // Load SKN skinned mesh
-                    data = await api.readSknMesh(filePath);
+                    // Load SKN skinned mesh AND skeleton/animations in parallel
+                    // This significantly reduces loading time by parallelizing independent requests
+                    const sklPath = filePath.replace(/\.skn$/i, '.skl');
 
-                    // Debug: log texture loading
-                    const sknData = data as SknMeshData;
-                    if (sknData.textures && Object.keys(sknData.textures).length > 0) {
-                        console.log('[ModelPreview] Loaded textures:', Object.keys(sknData.textures));
+                    const [meshResult, animResult, sklResult] = await Promise.allSettled([
+                        api.readSknMesh(filePath),
+                        api.readAnimationList(filePath),
+                        api.readSklSkeleton(sklPath)
+                    ]);
+
+                    // Handle mesh result (required)
+                    if (meshResult.status === 'fulfilled') {
+                        data = meshResult.value;
+
+                        // Debug: log texture loading
+                        const sknData = data as SknMeshData;
+                        if (sknData.textures && Object.keys(sknData.textures).length > 0) {
+                            console.log('[ModelPreview] Loaded textures:', Object.keys(sknData.textures));
+                        } else {
+                            console.log('[ModelPreview] No textures found in mesh data');
+                        }
                     } else {
-                        console.log('[ModelPreview] No textures found in mesh data');
+                        throw meshResult.reason;
+                    }
+
+                    if (cancelled) return;
+
+                    // Handle animation result (optional)
+                    if (animResult.status === 'fulfilled') {
+                        const animList = animResult.value;
+                        if (animList.clips && animList.clips.length > 0) {
+                            console.log('[ModelPreview] Found animations:', animList.clips.length);
+                            setAnimations(animList.clips);
+                        }
+                    } else {
+                        console.log('[ModelPreview] No animations found:', animResult.reason);
+                    }
+
+                    // Handle skeleton result (optional)
+                    if (sklResult.status === 'fulfilled') {
+                        const skeleton = sklResult.value;
+                        console.log('[ModelPreview] Loaded skeleton with', skeleton.bones.length, 'bones');
+                        setSkeletonData(skeleton);
+                    } else {
+                        console.log('[ModelPreview] No skeleton found:', sklResult.reason);
                     }
                 }
 
                 if (cancelled) return;
 
+                // Set mesh data and visible materials (for both static and skinned meshes)
                 setMeshData(data);
 
                 // Initialize all materials as visible
@@ -772,30 +870,6 @@ export const ModelPreview: React.FC<ModelPreviewProps> = ({ filePath, meshType =
                     setVisibleMaterials(new Set(data.materials.map((m: MaterialRange) => m.name)));
                 } else {
                     setVisibleMaterials(new Set(data.materials));
-                }
-
-                // Only load skeleton/animations for skinned meshes
-                if (meshType === 'skinned') {
-                    // Try to load animation list
-                    try {
-                        const animList = await api.readAnimationList(filePath);
-                        if (animList.clips && animList.clips.length > 0) {
-                            console.log('[ModelPreview] Found animations:', animList.clips.length);
-                            setAnimations(animList.clips);
-                        }
-                    } catch (animErr) {
-                        console.log('[ModelPreview] No animations found:', animErr);
-                    }
-
-                    // Try to load skeleton from same folder as SKN
-                    const sklPath = filePath.replace(/\.skn$/i, '.skl');
-                    try {
-                        const skeleton = await api.readSklSkeleton(sklPath);
-                        console.log('[ModelPreview] Loaded skeleton with', skeleton.bones.length, 'bones');
-                        setSkeletonData(skeleton);
-                    } catch (sklErr) {
-                        console.log('[ModelPreview] No skeleton found:', sklErr);
-                    }
                 }
             } catch (err) {
                 if (cancelled) return;
@@ -1018,7 +1092,11 @@ export const ModelPreview: React.FC<ModelPreviewProps> = ({ filePath, meshType =
                     <div className="model-preview__materials-list">
                         {meshData.materials.map((mat, index) => {
                             const matName = typeof mat === 'string' ? mat : mat.name;
-                            const hasTexture = isSknMeshData(meshData) && meshData.textures && meshData.textures[matName];
+                            // Check for texture in material_data (new) or textures (deprecated)
+                            const hasTexture = isSknMeshData(meshData) && (
+                                (meshData.material_data && meshData.material_data[matName]) ||
+                                (meshData.textures && meshData.textures[matName])
+                            );
                             return (
                                 <label
                                     key={matName || index}
@@ -1070,26 +1148,35 @@ export const ModelPreview: React.FC<ModelPreviewProps> = ({ filePath, meshType =
                                 {hoveredMaterial}
                             </div>
                             <div className="asset-preview-tooltip__content">
-                                {meshData.textures && meshData.textures[hoveredMaterial] ? (
-                                    <div className="asset-preview-tooltip__texture">
-                                        <img
-                                            src={`data:image/png;base64,${meshData.textures[hoveredMaterial]}`}
-                                            alt={hoveredMaterial}
-                                            style={{
-                                                maxWidth: '180px',
-                                                maxHeight: '160px',
-                                                objectFit: 'contain',
-                                                borderRadius: '4px',
-                                                background: 'repeating-conic-gradient(var(--bg-tertiary) 0% 25%, var(--bg-primary) 0% 50%) 50% / 10px 10px'
-                                            }}
-                                        />
-                                    </div>
-                                ) : (
-                                    <div className="asset-preview-tooltip__error">
-                                        <span className="asset-preview-tooltip__error-icon">🎨</span>
-                                        <span>No texture loaded</span>
-                                    </div>
-                                )}
+                                {(() => {
+                                    // Get texture from material_data (new) or textures (deprecated)
+                                    const textureData = meshData.material_data?.[hoveredMaterial]?.texture ||
+                                        meshData.textures?.[hoveredMaterial];
+                                    if (textureData) {
+                                        return (
+                                            <div className="asset-preview-tooltip__texture">
+                                                <img
+                                                    src={`data:image/png;base64,${textureData}`}
+                                                    alt={hoveredMaterial}
+                                                    style={{
+                                                        maxWidth: '180px',
+                                                        maxHeight: '160px',
+                                                        objectFit: 'contain',
+                                                        borderRadius: '4px',
+                                                        background: 'repeating-conic-gradient(var(--bg-tertiary) 0% 25%, var(--bg-primary) 0% 50%) 50% / 10px 10px'
+                                                    }}
+                                                />
+                                            </div>
+                                        );
+                                    } else {
+                                        return (
+                                            <div className="asset-preview-tooltip__error">
+                                                <span className="asset-preview-tooltip__error-icon">🎨</span>
+                                                <span>No texture loaded</span>
+                                            </div>
+                                        );
+                                    }
+                                })()}
                             </div>
                         </div>
                     )}

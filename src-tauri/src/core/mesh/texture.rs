@@ -12,16 +12,43 @@ use crate::core::bin::ltk_bridge;
 use serde::Serialize;
 use regex::Regex;
 
-/// Texture mapping extracted from BIN file
+/// Extended material properties including UV transformations
+#[derive(Debug, Clone, Serialize, Default)]
+pub struct MaterialProperties {
+    /// Diffuse texture path
+    pub texture_path: String,
+    
+    /// UV scale (tiling) - [scaleU, scaleV]
+    /// From paramValue "UVScaleAndOffset" vec4[0,1]
+    pub uv_scale: Option<[f32; 2]>,
+    
+    /// UV offset (shift) - [offsetU, offsetV]  
+    /// From paramValue "UVScaleAndOffset" vec4[2,3]
+    pub uv_offset: Option<[f32; 2]>,
+    
+    /// Flipbook texture atlas size - [columns, rows]
+    /// From paramValue "FlipbookSize" vec4[0,1]
+    pub flipbook_size: Option<[u32; 2]>,
+    
+    /// Current flipbook frame index
+    /// From paramValue "FrameIndex" vec4[0]
+    pub flipbook_frame: Option<f32>,
+}
+
+/// Texture mapping extracted from BIN file with UV transform parameters
 #[derive(Debug, Clone, Serialize, Default)]
 pub struct TextureMapping {
     /// Default texture path for meshes without specific override
     pub default_texture: Option<String>,
-    /// Per-submesh texture overrides (submesh name → texture path)
-    pub material_overrides: HashMap<String, String>,
-    /// Static material references that couldn't be resolved
+    
+    /// Per-material properties including texture and UV transforms
+    /// Key = submesh/material name, Value = material properties
+    pub material_properties: HashMap<String, MaterialProperties>,
+    
+    /// Static material references that couldn't be resolved (for debugging)
     pub static_materials: Vec<String>,
-    /// Raw ritobin content for late lookups (e.g., finding StaticMaterialDef by name)
+    
+    /// Raw ritobin content for late lookups
     #[serde(skip)]
     pub ritobin_content: String,
 }
@@ -254,7 +281,12 @@ fn extract_texture_mapping_from_text(content: &str) -> anyhow::Result<TextureMap
                             if let Some(tex_match) = tex_regex.captures(part) {
                                 let tex_path = tex_match.get(1).unwrap().as_str().to_string();
                                 tracing::info!("  -> Direct texture: {}", tex_path);
-                                mapping.material_overrides.insert(submesh_name.clone(), tex_path);
+                                // Direct textures have no UV transforms
+                                let props = MaterialProperties {
+                                    texture_path: tex_path,
+                                    ..Default::default()
+                                };
+                                mapping.material_properties.insert(submesh_name.clone(), props);
                                 continue;
                             }
                             
@@ -265,10 +297,10 @@ fn extract_texture_mapping_from_text(content: &str) -> anyhow::Result<TextureMap
                                 let mat_path = mat_match.get(1).unwrap().as_str().to_string();
                                 tracing::info!("  -> Material link (string): {}", mat_path);
                                 
-                                // Resolve material link
-                                if let Some(resolved_tex) = resolve_material_texture(content, &mat_path) {
-                                    tracing::info!("  -> RESOLVED to: {}", resolved_tex);
-                                    mapping.material_overrides.insert(submesh_name.clone(), resolved_tex);
+                                // Resolve material link - now returns MaterialProperties with UV transforms
+                                if let Some(props) = resolve_material_texture(content, &mat_path) {
+                                    tracing::info!("  -> RESOLVED to: {}", props.texture_path);
+                                    mapping.material_properties.insert(submesh_name.clone(), props);
                                 } else {
                                     tracing::warn!("  -> FAILED to resolve material link!");
                                     mapping.static_materials.push(format!("Link: {} -> {}", submesh_name, mat_path));
@@ -283,10 +315,10 @@ fn extract_texture_mapping_from_text(content: &str) -> anyhow::Result<TextureMap
                                 let mat_hash = hash_match.get(1).unwrap().as_str();
                                 tracing::info!("  -> Material link (hash): {}", mat_hash);
                                 
-                                // Try to resolve hex hash to texture
-                                if let Some(resolved_tex) = resolve_material_texture_by_hash(content, mat_hash) {
-                                    tracing::info!("  -> RESOLVED to: {}", resolved_tex);
-                                    mapping.material_overrides.insert(submesh_name.clone(), resolved_tex);
+                                // Try to resolve hex hash to MaterialProperties
+                                if let Some(props) = resolve_material_texture_by_hash(content, mat_hash) {
+                                    tracing::info!("  -> RESOLVED to: {}", props.texture_path);
+                                    mapping.material_properties.insert(submesh_name.clone(), props);
                                 } else {
                                     tracing::warn!("  -> FAILED to resolve material hash!");
                                     mapping.static_materials.push(format!("Hash: {} -> {}", submesh_name, mat_hash));
@@ -302,27 +334,43 @@ fn extract_texture_mapping_from_text(content: &str) -> anyhow::Result<TextureMap
         }
     }
     
-    tracing::info!("Final material_overrides count: {}", mapping.material_overrides.len());
+    tracing::info!("Final material_properties count: {}", mapping.material_properties.len());
     Ok(mapping)
 }
 
-/// Look up a texture for a material by searching for a StaticMaterialDef with matching name
+/// Look up MaterialProperties for a material by searching for StaticMaterialDef with matching name
 /// 
 /// This is used for materials that aren't in the materialOverride list but have their 
 /// own StaticMaterialDef block in the BIN file.
-pub fn lookup_material_texture_by_name(ritobin_content: &str, material_name: &str) -> Option<String> {
+pub fn lookup_material_texture_by_name(ritobin_content: &str, material_name: &str) -> Option<MaterialProperties> {
     tracing::debug!("Looking up StaticMaterialDef for material: {}", material_name);
+    
+    // Helper to extract MaterialProperties from a block
+    let extract_props = |block: &str| -> Option<MaterialProperties> {
+        if let Some(texture_path) = extract_diffuse_texture_from_block(block) {
+            let (uv_scale, uv_offset, flipbook_size, flipbook_frame) = extract_param_values(block);
+            Some(MaterialProperties {
+                texture_path,
+                uv_scale,
+                uv_offset,
+                flipbook_size,
+                flipbook_frame,
+            })
+        } else {
+            None
+        }
+    };
     
     // Strategy 1: Exact path match
     // Pattern: "ExactMaterialName" = StaticMaterialDef
-    let exact_pattern = format!(r#""{}"\s*=\s*StaticMaterialDef\s*"#, regex::escape(material_name));
+    let exact_pattern = format!(r#""{}"\\s*=\\s*StaticMaterialDef\\s*"#, regex::escape(material_name));
     if let Ok(regex) = Regex::new(&exact_pattern) {
         if let Some(mat) = regex.find(ritobin_content) {
             tracing::debug!("Found exact StaticMaterialDef match at position {}", mat.start());
             if let Some(block) = extract_braced_block(ritobin_content, mat.end() - 1) {
-                if let Some(texture) = extract_diffuse_texture_from_block(&block) {
-                    tracing::debug!("Resolved '{}' to texture: {}", material_name, texture);
-                    return Some(texture);
+                if let Some(props) = extract_props(&block) {
+                    tracing::debug!("Resolved '{}' to texture: {}", material_name, props.texture_path);
+                    return Some(props);
                 }
             }
         }
@@ -330,14 +378,14 @@ pub fn lookup_material_texture_by_name(ritobin_content: &str, material_name: &st
     
     // Strategy 2: Path ends with material name
     // Pattern: ".../{material_name}" = StaticMaterialDef
-    let ends_with_pattern = format!(r#""[^"]*/{}"[^=]*=\s*StaticMaterialDef\s*"#, regex::escape(material_name));
+    let ends_with_pattern = format!(r#""[^"]*/{}\"[^=]*=\\s*StaticMaterialDef\\s*"#, regex::escape(material_name));
     if let Ok(regex) = Regex::new(&ends_with_pattern) {
         if let Some(mat) = regex.find(ritobin_content) {
             tracing::debug!("Found path-ending StaticMaterialDef match at position {}", mat.start());
             if let Some(block) = extract_braced_block(ritobin_content, mat.end() - 1) {
-                if let Some(texture) = extract_diffuse_texture_from_block(&block) {
-                    tracing::debug!("Resolved '{}' to texture: {}", material_name, texture);
-                    return Some(texture);
+                if let Some(props) = extract_props(&block) {
+                    tracing::debug!("Resolved '{}' to texture: {}", material_name, props.texture_path);
+                    return Some(props);
                 }
             }
         }
@@ -345,14 +393,14 @@ pub fn lookup_material_texture_by_name(ritobin_content: &str, material_name: &st
     
     // Strategy 3: Contains material name anywhere in path (partial match)
     // Pattern: "...{material_name}..." = StaticMaterialDef
-    let contains_pattern = format!(r#""[^"]*{}[^"]*"\s*=\s*StaticMaterialDef\s*"#, regex::escape(material_name));
+    let contains_pattern = format!(r#""[^"]*{}[^"]*"\\s*=\\s*StaticMaterialDef\\s*"#, regex::escape(material_name));
     if let Ok(regex) = Regex::new(&contains_pattern) {
         if let Some(mat) = regex.find(ritobin_content) {
             tracing::debug!("Found partial StaticMaterialDef match at position {}", mat.start());
             if let Some(block) = extract_braced_block(ritobin_content, mat.end() - 1) {
-                if let Some(texture) = extract_diffuse_texture_from_block(&block) {
-                    tracing::debug!("Resolved '{}' to texture: {}", material_name, texture);
-                    return Some(texture);
+                if let Some(props) = extract_props(&block) {
+                    tracing::debug!("Resolved '{}' to texture: {}", material_name, props.texture_path);
+                    return Some(props);
                 }
             }
         }
@@ -360,25 +408,109 @@ pub fn lookup_material_texture_by_name(ritobin_content: &str, material_name: &st
     
     // Strategy 4: Case-insensitive search
     let lower_name = material_name.to_lowercase();
-    let case_insensitive_pattern = format!(r#"(?i)"[^"]*{}[^"]*"\s*=\s*StaticMaterialDef\s*"#, regex::escape(&lower_name));
+    let case_insensitive_pattern = format!(r#"(?i)"[^"]*{}[^"]*"\\s*=\\s*StaticMaterialDef\\s*"#, regex::escape(&lower_name));
     if let Ok(regex) = Regex::new(&case_insensitive_pattern) {
         if let Some(mat) = regex.find(ritobin_content) {
             tracing::debug!("Found case-insensitive StaticMaterialDef match at position {}", mat.start());
             if let Some(block) = extract_braced_block(ritobin_content, mat.end() - 1) {
-                if let Some(texture) = extract_diffuse_texture_from_block(&block) {
-                    tracing::debug!("Resolved '{}' to texture: {}", material_name, texture);
-                    return Some(texture);
+                if let Some(props) = extract_props(&block) {
+                    tracing::debug!("Resolved '{}' to texture: {}", material_name, props.texture_path);
+                    return Some(props);
+                }
+            }
+        }
+    }
+    tracing::debug!("No StaticMaterialDef found for material: {}", material_name);
+    None
+}
+
+/// Extract UV transform parameters from a StaticMaterialDef block's paramValues
+/// 
+/// Parses:
+/// - UVScaleAndOffset: vec4 = { scaleU, scaleV, offsetU, offsetV }
+/// - FlipbookSize: vec4 = { cols, rows, 0, 0 }
+/// - FrameIndex: vec4 = { index, 0, 0, 0 }
+fn extract_param_values(material_block: &str) -> (Option<[f32; 2]>, Option<[f32; 2]>, Option<[u32; 2]>, Option<f32>) {
+    let mut uv_scale: Option<[f32; 2]> = None;
+    let mut uv_offset: Option<[f32; 2]> = None;
+    let mut flipbook_size: Option<[u32; 2]> = None;
+    let mut flipbook_frame: Option<f32> = None;
+    
+    // Find paramValues block - can be list[embed] or list2[embed]
+    let param_regex = match Regex::new(r"(?i)paramValues:\s*list2?\[embed\]\s*=\s*") {
+        Ok(r) => r,
+        Err(_) => return (None, None, None, None),
+    };
+    
+    let param_match = match param_regex.find(material_block) {
+        Some(m) => m,
+        None => return (None, None, None, None),
+    };
+    
+    // Extract paramValues block using brace counting
+    if let Some(param_block) = extract_braced_block(material_block, param_match.end() - 1) {
+        // Split by StaticMaterialShaderParamDef
+        let params: Vec<&str> = param_block.split("StaticMaterialShaderParamDef").collect();
+        
+        for param in params {
+            // Extract parameter name
+            let name_regex = match Regex::new(r#"name:\s*string\s*=\s*"([^"]+)""#) {
+                Ok(r) => r,
+                Err(_) => continue,
+            };
+            
+            if let Some(name_match) = name_regex.captures(param) {
+                let param_name = match name_match.get(1) {
+                    Some(m) => m.as_str(),
+                    None => continue,
+                };
+                
+                // Extract vec4 value: value: vec4 = { x, y, z, w }
+                let value_regex = match Regex::new(r"value:\s*vec4\s*=\s*\{\s*([^}]+)\s*\}") {
+                    Ok(r) => r,
+                    Err(_) => continue,
+                };
+                
+                if let Some(value_match) = value_regex.captures(param) {
+                    let values_str = match value_match.get(1) {
+                        Some(m) => m.as_str(),
+                        None => continue,
+                    };
+                    
+                    let values: Vec<f32> = values_str
+                        .split(',')
+                        .filter_map(|s| s.trim().parse::<f32>().ok())
+                        .collect();
+                    
+                    match param_name {
+                        "UVScaleAndOffset" if values.len() >= 4 => {
+                            uv_scale = Some([values[0], values[1]]);
+                            uv_offset = Some([values[2], values[3]]);
+                            tracing::debug!("Found UVScaleAndOffset: scale=[{}, {}], offset=[{}, {}]", 
+                                values[0], values[1], values[2], values[3]);
+                        }
+                        "FlipbookSize" if values.len() >= 2 => {
+                            flipbook_size = Some([values[0] as u32, values[1] as u32]);
+                            tracing::debug!("Found FlipbookSize: [{}, {}]", values[0], values[1]);
+                        }
+                        "FrameIndex" if !values.is_empty() => {
+                            flipbook_frame = Some(values[0]);
+                            tracing::debug!("Found FrameIndex: {}", values[0]);
+                        }
+                        _ => {}
+                    }
                 }
             }
         }
     }
     
-    tracing::debug!("No StaticMaterialDef found for material: {}", material_name);
-    None
+    (uv_scale, uv_offset, flipbook_size, flipbook_frame)
 }
 
-/// Resolve a material path to a texture path by searching the BIN content for the material definition
-fn resolve_material_texture(content: &str, material_path: &str) -> Option<String> {
+/// Resolve a material path to MaterialProperties by searching the BIN content
+/// 
+/// Returns texture path AND UV transform parameters
+fn resolve_material_texture(content: &str, material_path: &str) -> Option<MaterialProperties> {
     tracing::info!("Resolving material link: '{}'", material_path);
     
     // Escape special characters in material path for regex
@@ -401,18 +533,30 @@ fn resolve_material_texture(content: &str, material_path: &str) -> Option<String
         
         // Use brace counting to extract the full block
         if let Some(block) = extract_braced_block(content, def_match.end() - 1) {
-            tracing::debug!("Extracted block ({} chars), searching for diffuse texture...", block.len());
+            tracing::debug!("Extracted block ({} chars)", block.len());
             
-            let result = extract_diffuse_texture_from_block(&block);
-            if let Some(ref tex) = result {
-                tracing::info!("SUCCESS: '{}' -> '{}'", material_path, tex);
+            // Extract texture path
+            if let Some(texture_path) = extract_diffuse_texture_from_block(&block) {
+                tracing::info!("Found texture: {}", texture_path);
+                
+                // Extract UV transform parameters
+                let (uv_scale, uv_offset, flipbook_size, flipbook_frame) = extract_param_values(&block);
+                
+                let props = MaterialProperties {
+                    texture_path,
+                    uv_scale,
+                    uv_offset,
+                    flipbook_size,
+                    flipbook_frame,
+                };
+                
+                tracing::info!("SUCCESS: '{}' resolved with transforms", material_path);
+                return Some(props);
             } else {
                 tracing::warn!("FAILED: Could not find diffuse texture in StaticMaterialDef block for '{}'", material_path);
-                // Log first 500 chars of block for debugging
                 let preview: String = block.chars().take(500).collect();
                 tracing::debug!("Block preview: {}", preview);
             }
-            return result;
         } else {
             tracing::warn!("Failed to extract braced block after StaticMaterialDef header");
         }
@@ -423,8 +567,8 @@ fn resolve_material_texture(content: &str, material_path: &str) -> Option<String
     None
 }
 
-/// Resolve a hex hash material reference to a texture path
-fn resolve_material_texture_by_hash(content: &str, hash: &str) -> Option<String> {
+/// Resolve a hex hash material reference to MaterialProperties
+fn resolve_material_texture_by_hash(content: &str, hash: &str) -> Option<MaterialProperties> {
     tracing::debug!("Resolving material link (hash): {}", hash);
     
     // Find the definition header: 0xABCDEF = StaticMaterialDef {
@@ -437,7 +581,16 @@ fn resolve_material_texture_by_hash(content: &str, hash: &str) -> Option<String>
         
         // Use brace counting to extract the full block
         if let Some(block) = extract_braced_block(content, mat.end() - 1) {
-            return extract_diffuse_texture_from_block(&block);
+            if let Some(texture_path) = extract_diffuse_texture_from_block(&block) {
+                let (uv_scale, uv_offset, flipbook_size, flipbook_frame) = extract_param_values(&block);
+                return Some(MaterialProperties {
+                    texture_path,
+                    uv_scale,
+                    uv_offset,
+                    flipbook_size,
+                    flipbook_frame,
+                });
+            }
         }
     }
     
@@ -590,9 +743,9 @@ mod tests {
         // Check default texture
         assert_eq!(mapping.default_texture, Some("ASSETS/Characters/Test/Skins/Skin0/Test_Base_TX_CM.tex".to_string()));
         
-        // Check overrides
-        assert_eq!(mapping.material_overrides.get("DirectMesh"), Some(&"ASSETS/Characters/Test/Skins/Skin0/Direct_Override.tex".to_string()));
-        assert_eq!(mapping.material_overrides.get("LinkedMesh"), Some(&"ASSETS/Characters/Test/Skins/Skin0/Resolved_Linked.tex".to_string()));
+        // Check overrides - now using material_properties
+        assert_eq!(mapping.material_properties.get("DirectMesh").map(|p| &p.texture_path), Some(&"ASSETS/Characters/Test/Skins/Skin0/Direct_Override.tex".to_string()));
+        assert_eq!(mapping.material_properties.get("LinkedMesh").map(|p| &p.texture_path), Some(&"ASSETS/Characters/Test/Skins/Skin0/Resolved_Linked.tex".to_string()));
     }
 
     #[test]
@@ -605,7 +758,7 @@ mod tests {
         
         let mapping = extract_texture_mapping_from_text(ritobin_content).unwrap();
         assert_eq!(mapping.default_texture, Some("ASSETS/Simple.tex".to_string()));
-        assert!(mapping.material_overrides.is_empty());
+        assert!(mapping.material_properties.is_empty());
     }
 
     #[test]
@@ -638,7 +791,7 @@ mod tests {
         
         // Check that hex hash was resolved
         assert_eq!(
-            mapping.material_overrides.get("HashedMesh"), 
+            mapping.material_properties.get("HashedMesh").map(|p| &p.texture_path), 
             Some(&"ASSETS/Characters/Test/Skins/Skin0/Hashed_Resolved.tex".to_string())
         );
         // Should not appear in static_materials since it was resolved

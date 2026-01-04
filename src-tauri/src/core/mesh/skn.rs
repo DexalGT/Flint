@@ -39,6 +39,25 @@ impl From<&SkinnedMeshRange> for MaterialRange {
     }
 }
 
+/// Material data including texture and UV parameters for frontend consumption
+#[derive(Debug, Clone, Serialize)]
+pub struct MaterialData {
+    /// Base64-encoded PNG texture data
+    pub texture: String,
+    /// UV scale (tiling) - [scaleU, scaleV]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub uv_scale: Option<[f32; 2]>,
+    /// UV offset (shift) - [offsetU, offsetV]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub uv_offset: Option<[f32; 2]>,
+    /// Flipbook texture atlas size - [columns, rows]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub flipbook_size: Option<[u32; 2]>,
+    /// Current flipbook frame index
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub flipbook_frame: Option<f32>,
+}
+
 /// Complete mesh data serializable to JSON for frontend
 #[derive(Debug, Serialize)]
 pub struct SknMeshData {
@@ -54,9 +73,12 @@ pub struct SknMeshData {
     pub indices: Vec<u16>,
     /// Bounding box as [min, max] where each is [x, y, z]
     pub bounding_box: [[f32; 3]; 2],
-    /// Per-submesh textures as base64 PNG data (optional, loaded from skin0.bin)
+    /// Per-submesh textures as base64 PNG data (DEPRECATED - use material_data)
     #[serde(skip_serializing_if = "HashMap::is_empty")]
     pub textures: HashMap<String, String>,
+    /// Per-material data including textures AND UV transform parameters
+    #[serde(skip_serializing_if = "HashMap::is_empty")]
+    pub material_data: HashMap<String, MaterialData>,
     /// Bone weights for skinning - 4 weights per vertex [w0, w1, w2, w3]
     /// Weights should sum to 1.0 for proper skinning
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -150,7 +172,8 @@ pub fn parse_skn_file<P: AsRef<Path>>(path: P) -> anyhow::Result<SknMeshData> {
         uvs,
         indices,
         bounding_box,
-        textures: HashMap::new(), // Textures loaded separately by command
+        textures: HashMap::new(), // DEPRECATED - use material_data
+        material_data: HashMap::new(), // Material data loaded separately by command
         bone_weights,
         bone_indices,
     })

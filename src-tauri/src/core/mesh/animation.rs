@@ -1,7 +1,5 @@
-//! Animation parsing from BIN files and ANM files
-//!
-//! Parses animation/skinX.bin for AtomicClipData entries containing animation paths,
-//! and loads ANM files using ltk_anim::AnimationAsset.
+//! Animation BIN parsing and ANM file loading
+//! Discovers animation BINs from skin dependencies and loads ANM files.
 
 use std::collections::HashMap;
 use std::fs::{self, File};
@@ -60,11 +58,88 @@ pub struct AnimationPose {
     pub joints: HashMap<u32, JointTransform>,
 }
 
-/// Find animation BIN file for a skin
+/// Extract animation BIN path from skin BIN's dependencies list.
+/// Animation BINs are Type 2 (contain "/animations/" in path).
+pub fn extract_animation_graph_path(skin_bin_path: &Path) -> Option<PathBuf> {
+    tracing::debug!("Extracting animation BIN from dependencies: {}", skin_bin_path.display());
+    
+    // Read and parse the skin BIN file
+    let data = fs::read(skin_bin_path).ok()?;
+    let tree = ltk_bridge::read_bin(&data).ok()?;
+    
+    // Look through dependencies for animation BIN (Type 2)
+    // Animation BINs have "/animations/" in their path
+    tracing::debug!("Skin BIN has {} dependencies", tree.dependencies.len());
+    
+    for dep_path in &tree.dependencies {
+        let normalized = dep_path.to_lowercase().replace('\\', "/");
+        tracing::debug!("  Checking dependency: {}", dep_path);
+        
+        // Type 2: Animation BINs - in the animations folder
+        if normalized.contains("/animations/") && normalized.ends_with(".bin") {
+            tracing::info!("Found animation BIN in dependencies: {}", dep_path);
+            return resolve_animation_bin_from_reference(skin_bin_path, dep_path);
+        }
+    }
+    
+    tracing::debug!("No animation BIN found in skin BIN dependencies");
+    None
+}
+
+/// Resolve an animation BIN reference path to an actual file path
 /// 
-/// Looks for animation/skinX.bin relative to the project
+/// Simple approach: skin BIN is at skins/skinX.bin, animation BIN is at animations/skinX.bin
+/// Just go up one folder and look in animations/
+fn resolve_animation_bin_from_reference(skin_bin_path: &Path, reference_path: &str) -> Option<PathBuf> {
+    tracing::debug!("Resolving animation reference: {} from {}", reference_path, skin_bin_path.display());
+    
+    // Extract just the filename (e.g., "Skin20.bin")
+    let filename = Path::new(reference_path).file_name()?.to_string_lossy().to_string();
+    
+    // skin_bin_path is like: .../data/characters/kayn/skins/skin20.bin
+    // We want:               .../data/characters/kayn/animations/skin20.bin
+    
+    // Go up from skin BIN (skin20.bin -> skins -> kayn)
+    let skins_folder = skin_bin_path.parent()?;  // .../skins
+    let champion_folder = skins_folder.parent()?;  // .../kayn
+    
+    // Look for animations folder as sibling to skins
+    let animations_folder = champion_folder.join("animations");
+    let anim_bin_path = animations_folder.join(&filename);
+    
+    tracing::debug!("Looking for animation BIN at: {}", anim_bin_path.display());
+    
+    if anim_bin_path.exists() {
+        tracing::info!("Found animation BIN: {}", anim_bin_path.display());
+        return Some(anim_bin_path);
+    }
+    
+    // Try lowercase filename
+    let filename_lower = filename.to_lowercase();
+    let anim_bin_path_lower = animations_folder.join(&filename_lower);
+    if anim_bin_path_lower.exists() {
+        tracing::info!("Found animation BIN (lowercase): {}", anim_bin_path_lower.display());
+        return Some(anim_bin_path_lower);
+    }
+    
+    tracing::debug!("Animation BIN not found at expected location");
+    None
+}
+
+/// Find animation BIN for a skin.
+/// First checks skin BIN dependencies, then falls back to directory search.
 pub fn find_animation_bin(skn_path: &Path) -> Option<PathBuf> {
     tracing::debug!("Looking for animation BIN relative to: {}", skn_path.display());
+    
+    // NEW: Strategy 0 - Check skin BIN for animation graph reference
+    // Import find_skin_bin from texture module
+    if let Some(skin_bin_path) = crate::core::mesh::texture::find_skin_bin(skn_path) {
+        tracing::debug!("Found skin BIN, checking for animation graph reference: {}", skin_bin_path.display());
+        if let Some(anim_bin) = extract_animation_graph_path(&skin_bin_path) {
+            tracing::info!("Found animation BIN via skin BIN reference: {}", anim_bin.display());
+            return Some(anim_bin);
+        }
+    }
     
     // Strategy 1: animation folder in same directory as SKN
     if let Some(skin_dir) = skn_path.parent() {

@@ -85,8 +85,9 @@ These features are implemented in `src-tauri/src/core/repath/refather.rs` and `s
 |---------|--------|-------------|
 | **SKN/SKL 3D Preview** | ✅ Working | In-app 3D model viewer for champion skin meshes and skeletons with texture mapping |
 | **SCB/SCO Preview** | ✅ Working | Static mesh viewer for particle geometry and props via `ltk_mesh` |
+| **Animation Preview** | ✅ Working | ANM file playback on 3D models with skeleton animation |
+| **Parallel Asset Loading** | ✅ Working | Mesh, skeleton, and animations load concurrently for faster previews |
 | **Sound Bank Editing** | 🔜 Planned | BNK/WPK audio file preview and editing support |
-| **Animation Preview** | 🔜 Planned | ANM file playback on 3D models |
 
 ---
 
