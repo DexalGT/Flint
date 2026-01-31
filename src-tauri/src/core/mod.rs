@@ -9,4 +9,5 @@ pub mod validation;
 pub mod repath;
 pub mod export;
 pub mod mesh;
+pub mod checkpoint;
 pub mod frontend_log;

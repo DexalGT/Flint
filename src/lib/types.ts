@@ -7,8 +7,8 @@
 // =============================================================================
 
 export type AppStatus = 'ready' | 'working' | 'error';
-export type ModalType = 'newProject' | 'settings' | 'export' | 'firstTimeSetup' | 'updateAvailable' | null;
-export type ViewType = 'welcome' | 'preview' | 'editor' | 'project';
+export type ModalType = 'newProject' | 'settings' | 'export' | 'firstTimeSetup' | 'updateAvailable' | 'recolor' | 'checkpoint' | null;
+export type ViewType = 'welcome' | 'preview' | 'editor' | 'project' | 'checkpoints';
 
 export interface Toast {
     id: number;
@@ -68,6 +68,19 @@ export interface Chroma {
     name: string;
 }
 
+export interface ContextMenuState {
+    x: number;
+    y: number;
+    options: ContextMenuOption[];
+}
+
+export interface ContextMenuOption {
+    label: string;
+    icon?: string;
+    onClick: () => void;
+    danger?: boolean;
+}
+
 export interface AppState {
     // App status
     status: AppStatus;
@@ -108,6 +121,9 @@ export interface AppState {
     // Log panel
     logs: LogEntry[];
     logPanelExpanded: boolean;
+
+    // Context menu
+    contextMenu: ContextMenuState | null;
 }
 
 // =============================================================================
@@ -135,4 +151,32 @@ export interface UpdateInfo {
     release_notes: string;
     download_url: string;
     published_at: string;
+}
+
+// =============================================================================
+// Checkpoint Types
+// =============================================================================
+
+export type AssetType = 'Texture' | 'Model' | 'Animation' | 'Bin' | 'Audio' | 'Data' | 'Unknown';
+
+export interface FileEntry {
+    path: string;
+    hash: string;
+    size: number;
+    asset_type: AssetType;
+}
+
+export interface Checkpoint {
+    id: string;
+    timestamp: string; // ISO 8601
+    message: string;
+    author?: string;
+    tags: string[];
+    file_manifest: Record<string, FileEntry>;
+}
+
+export interface CheckpointDiff {
+    added: FileEntry[];
+    modified: [FileEntry, FileEntry][];
+    deleted: FileEntry[];
 }

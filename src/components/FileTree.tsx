@@ -94,12 +94,28 @@ const TreeNode: React.FC<TreeNodeProps> = ({
     expandedFolders,
     onItemClick,
 }) => {
+    const { openModal, openContextMenu } = useAppState();
     const isExpanded = expandedFolders.has(node.path);
     const isSelected = selectedFile === node.path;
 
     const handleClick = (e: React.MouseEvent) => {
         e.stopPropagation();
         onItemClick(node.path, node.isDirectory);
+    };
+
+    const handleContextMenu = (e: React.MouseEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+
+        if (node.isDirectory) {
+            openContextMenu(e.clientX, e.clientY, [
+                {
+                    label: 'Batch Recolor',
+                    icon: getIcon('texture'),
+                    onClick: () => openModal('recolor', { filePath: node.path, isFolder: true })
+                }
+            ]);
+        }
     };
 
     const icon = getFileIcon(node.name, node.isDirectory, isExpanded);
@@ -111,6 +127,7 @@ const TreeNode: React.FC<TreeNodeProps> = ({
                 className={`file-tree__item ${isSelected ? 'file-tree__item--selected' : ''}`}
                 style={{ paddingLeft: 4 + depth * 12 }}
                 onClick={handleClick}
+                onContextMenu={handleContextMenu}
             >
                 {node.isDirectory ? (
                     <span

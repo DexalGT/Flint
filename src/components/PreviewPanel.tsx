@@ -69,7 +69,7 @@ const formatFileSize = (bytes: number): string => {
 };
 
 export const PreviewPanel: React.FC = () => {
-    const { state } = useAppState();
+    const { state, openModal } = useAppState();
     const [fileInfo, setFileInfo] = useState<FileInfo | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [loading, setLoading] = useState(false);
@@ -195,6 +195,14 @@ export const PreviewPanel: React.FC = () => {
                             onClick={() => setImageZoom(2)}
                         >
                             200%
+                        </button>
+                        <div className="preview-panel__divider" style={{ width: '1px', height: '16px', background: 'var(--border)', margin: '0 8px' }} />
+                        <button
+                            className="btn btn--sm"
+                            onClick={() => openModal('recolor', { filePath: selectedFile })}
+                        >
+                            <span dangerouslySetInnerHTML={{ __html: getIcon('texture') }} />
+                            <span>Recolor</span>
                         </button>
                     </div>
                 )}

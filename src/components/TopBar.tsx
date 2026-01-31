@@ -81,6 +81,11 @@ export const TopBar: React.FC = () => {
 
             showToast('success', `Exported to ${result.path}`);
 
+            // Auto-checkpoint after export
+            api.createCheckpoint(state.currentProjectPath, `Auto-checkpoint: Exported to ${format}`).catch(e => {
+                console.warn('Auto-checkpoint failed:', e);
+            });
+
         } catch (err) {
             console.error('Export failed:', err);
             const flintError = err as api.FlintError;
@@ -130,6 +135,17 @@ export const TopBar: React.FC = () => {
 
             {/* Actions */}
             <div className="topbar__actions">
+                {state.currentProjectPath && (
+                    <button
+                        className={`btn btn--ghost ${state.currentView === 'checkpoints' ? 'btn--active' : ''}`}
+                        title="Project Checkpoints"
+                        onClick={() => dispatch({ type: 'SET_STATE', payload: { currentView: 'checkpoints' } })}
+                    >
+                        <span dangerouslySetInnerHTML={{ __html: getIcon('history') }} />
+                        <span>Timeline</span>
+                    </button>
+                )}
+
                 {/* Export dropdown (only visible when project is open) */}
                 {state.currentProject && (
                     <div className={`dropdown ${dropdownOpen ? 'dropdown--open' : ''}`}>

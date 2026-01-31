@@ -170,6 +170,11 @@ export const NewProjectModal: React.FC = () => {
             closeModal();
             showToast('success', 'Project created successfully!');
 
+            // Initial auto-checkpoint
+            api.createCheckpoint(projectDir, 'Initial Project State').catch(e => {
+                console.warn('Initial checkpoint failed:', e);
+            });
+
         } catch (err) {
             console.error('Failed to create project:', err);
             const flintError = err as api.FlintError;

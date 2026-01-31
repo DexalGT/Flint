@@ -11,11 +11,13 @@ import { TopBar } from './TopBar';
 import { LeftPanel } from './FileTree';
 import { CenterPanel } from './CenterPanel';
 import { StatusBar } from './StatusBar';
+import { ContextMenu } from './ContextMenu';
 import { NewProjectModal } from './modals/NewProjectModal';
 import { SettingsModal } from './modals/SettingsModal';
 import { ExportModal } from './modals/ExportModal';
 import { FirstTimeSetupModal } from './modals/FirstTimeSetupModal';
 import { UpdateModal } from './modals/UpdateModal';
+import { RecolorModal } from './modals/RecolorModal';
 import { ToastContainer } from './Toast';
 
 export const App: React.FC = () => {
@@ -232,9 +234,13 @@ export const App: React.FC = () => {
             <ExportModal />
             <FirstTimeSetupModal />
             <UpdateModal />
+            <RecolorModal />
 
             {/* Toast notifications */}
             <ToastContainer />
+
+            {/* Context Menu */}
+            <ContextMenu />
         </>
     );
 };

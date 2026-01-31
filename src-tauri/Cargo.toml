@@ -47,8 +47,10 @@ rayon = "1.10"
 futures = "0.3"
 
 # Texture handling (DDS and TEX via league-toolkit)
-ltk_texture = "0.4"
-image = "0.25"
+ltk_texture = { version = "0.4", features = ["intel-tex"] }
+image = { version = "0.25", features = ["dds"] }
+image_dds = "0.6"
+ddsfile = "0.5"
 base64 = "0.21"
 
 # League toolkit for WAD operations (from crates.io)
@@ -91,6 +93,8 @@ toml = "0.8"
 slug = "0.1"
 itertools = "0.14"
 semver = "1.0"
+sha2 = "0.10.9"
+uuid = { version = "1.20.0", features = ["v4"] }
 
 # Windows registry access (Windows only)
 [target.'cfg(windows)'.dependencies]

@@ -51,6 +51,25 @@
 - **Text**: Syntax-highlighted text file viewing
 - **Images**: PNG/JPG preview with base64 encoding
 
+### 🎨 **Texture Recoloring**
+- **Multiple Recoloring Modes**:
+  - **Hue Shift**: Rotate all colors while preserving saturation and brightness
+  - **Colorize**: Convert entire texture to a single hue while preserving shading
+  - **Grayscale + Tint**: Apply monochrome effect with color overlay
+- **Smart Filtering**:
+  - Automatically skips distortion/distort textures (UV effect maps)
+  - Preserves black backgrounds and alpha transparency
+  - Optional checkbox to include distortion textures if needed
+- **Batch Processing**: Recolor entire folders of textures at once
+- **Color Presets**: Quick-select from 8 common colors (Red, Orange, Gold, Green, Cyan, Blue, Purple, Pink)
+- **Live Preview**: Before/after toggle to compare changes
+
+### 💾 **Checkpoint System**
+- Create named snapshots of your project state
+- Restore to any previous checkpoint instantly
+- Compare checkpoints to see exactly what changed
+- Auto-checkpoint option before destructive operations
+
 ### 📤 **Mod Export**
 - Export to `.fantome` format (compatible with cslol-manager) via `ltk_fantome`
 - Export to `.modpkg` format via `ltk_modpkg` (compatible with League Mod Tools)

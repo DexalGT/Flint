@@ -60,7 +60,7 @@ pub struct TextureMapping {
 /// 2. data/characters/{champion}/skins/skinN/ structure
 /// 3. Parent directories
 pub fn find_skin_bin(skn_path: &Path) -> Option<PathBuf> {
-    let path_str = skn_path.to_string_lossy().to_lowercase();
+    let _path_str = skn_path.to_string_lossy().to_lowercase();
     tracing::info!("Looking for skin BIN relative to: {}", skn_path.display());
     
     // Try to extract champion name and skin number from path

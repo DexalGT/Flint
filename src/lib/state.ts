@@ -4,7 +4,7 @@
  */
 
 import React, { createContext, useContext, useReducer, useCallback, useEffect, ReactNode } from 'react';
-import type { AppState, ModalType, Toast, RecentProject, Project, FileTreeNode, Champion, LogEntry } from './types';
+import type { AppState, ModalType, Toast, RecentProject, Project, FileTreeNode, Champion, LogEntry, ContextMenuState, ContextMenuOption } from './types';
 
 // =============================================================================
 // Initial State
@@ -14,6 +14,9 @@ const initialState: AppState = {
     // App status
     status: 'ready',
     statusMessage: 'Ready',
+
+    // Context menu
+    contextMenu: null,
 
     // Creator info (for repathing)
     creatorName: null,
@@ -70,7 +73,9 @@ type Action =
     | { type: 'SET_CHAMPIONS'; payload: Champion[] }
     | { type: 'ADD_LOG'; payload: LogEntry }
     | { type: 'CLEAR_LOGS' }
-    | { type: 'TOGGLE_LOG_PANEL' };
+    | { type: 'TOGGLE_LOG_PANEL' }
+    | { type: 'OPEN_CONTEXT_MENU'; payload: ContextMenuState }
+    | { type: 'CLOSE_CONTEXT_MENU' };
 
 // =============================================================================
 // Reducer
@@ -170,6 +175,18 @@ function appReducer(state: AppState, action: Action): AppState {
                 logPanelExpanded: !state.logPanelExpanded,
             };
 
+        case 'OPEN_CONTEXT_MENU':
+            return {
+                ...state,
+                contextMenu: action.payload,
+            };
+
+        case 'CLOSE_CONTEXT_MENU':
+            return {
+                ...state,
+                contextMenu: null,
+            };
+
         default:
             return state;
     }
@@ -194,6 +211,8 @@ interface AppContextValue {
     addLog: (level: LogEntry['level'], message: string) => void;
     clearLogs: () => void;
     toggleLogPanel: () => void;
+    openContextMenu: (x: number, y: number, options: ContextMenuOption[]) => void;
+    closeContextMenu: () => void;
 }
 
 const AppContext = createContext<AppContextValue | null>(null);
@@ -319,6 +338,14 @@ export function AppProvider({ children }: AppProviderProps) {
         dispatch({ type: 'TOGGLE_LOG_PANEL' });
     }, []);
 
+    const openContextMenu = useCallback((x: number, y: number, options: ContextMenuOption[]) => {
+        dispatch({ type: 'OPEN_CONTEXT_MENU', payload: { x, y, options } });
+    }, []);
+
+    const closeContextMenu = useCallback(() => {
+        dispatch({ type: 'CLOSE_CONTEXT_MENU' });
+    }, []);
+
     const value: AppContextValue = {
         state,
         dispatch,
@@ -333,6 +360,8 @@ export function AppProvider({ children }: AppProviderProps) {
         addLog,
         clearLogs,
         toggleLogPanel,
+        openContextMenu,
+        closeContextMenu,
     };
 
     return React.createElement(AppContext.Provider, { value }, children);

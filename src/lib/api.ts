@@ -63,12 +63,19 @@ export class FlintError extends Error {
             'decode_dds_to_png': 'Failed to decode texture file.',
             'decode_texture_to_png': 'Failed to decode texture file.',
             'read_text_file': 'Failed to read text file.',
+            'recolor_image': 'Failed to recolor image.',
+            'recolor_folder': 'Failed to recolor folder assets.',
             'extract_asset_references': 'Failed to extract asset references.',
             'validate_assets': 'Asset validation failed.',
             'export_fantome': 'Failed to export Fantome package.',
             'export_modpkg': 'Failed to export modpkg package.',
             'read_skn_mesh': 'Failed to read SKN mesh file.',
             'read_scb_mesh': 'Failed to read SCB mesh file.',
+            'create_checkpoint': 'Failed to create checkpoint.',
+            'list_checkpoints': 'Failed to load checkpoints.',
+            'restore_checkpoint': 'Failed to restore checkpoint.',
+            'compare_checkpoints': 'Failed to compare checkpoints.',
+            'delete_checkpoint': 'Failed to delete checkpoint.',
         };
         return messages[this.command] || this.message;
     }
@@ -87,8 +94,12 @@ export class FlintError extends Error {
             'save_project': 'Check that the project folder still exists and is writable.',
             'save_ritobin_to_bin': 'Check for syntax errors in the BIN editor.',
             'decode_dds_to_png': 'The texture format may not be supported.',
+            'recolor_image': 'Make sure the texture format is supported and the file is not read-only.',
+            'recolor_folder': 'Check if the folder contains valid texture files.',
             'read_file_bytes': 'Check that the file exists and is accessible.',
             'export_fantome': 'Ensure all project files are saved.',
+            'create_checkpoint': 'Make sure you have enough disk space and the project is not in use by another program.',
+            'restore_checkpoint': 'Ensure all project files are closed before restoring.',
         };
         return suggestions[this.command] || null;
     }
@@ -373,6 +384,42 @@ export async function readTextFile(path: string): Promise<string> {
     return invokeCommand('read_text_file', { path });
 }
 
+export async function recolorImage(
+    path: string,
+    hue: number,
+    saturation: number,
+    brightness: number
+): Promise<void> {
+    return invokeCommand('recolor_image', { path, hue, saturation, brightness });
+}
+
+export async function recolorFolder(
+    path: string,
+    hue: number,
+    saturation: number,
+    brightness: number,
+    skipDistortion: boolean = true
+): Promise<{ processed: number; failed: number }> {
+    return invokeCommand('recolor_folder', { path, hue, saturation, brightness, skipDistortion });
+}
+
+export async function colorizeImage(
+    path: string,
+    targetHue: number,
+    preserveSaturation: boolean
+): Promise<void> {
+    return invokeCommand('colorize_image', { path, targetHue, preserveSaturation });
+}
+
+export async function colorizeFolder(
+    path: string,
+    targetHue: number,
+    preserveSaturation: boolean,
+    skipDistortion: boolean = true
+): Promise<{ processed: number; failed: number }> {
+    return invokeCommand('colorize_folder', { path, targetHue, preserveSaturation, skipDistortion });
+}
+
 // =============================================================================
 // Validation Commands
 // =============================================================================
@@ -593,6 +640,40 @@ export async function checkForUpdates(): Promise<UpdateInfo> {
 
 export async function downloadAndInstallUpdate(downloadUrl: string): Promise<void> {
     return invokeCommand('download_and_install_update', { downloadUrl });
+}
+
+// =============================================================================
+// Checkpoint Commands
+// =============================================================================
+
+import type { Checkpoint, CheckpointDiff } from './types';
+
+export async function createCheckpoint(
+    projectPath: string,
+    message: string,
+    tags: string[] = []
+): Promise<Checkpoint> {
+    return invokeCommand('create_checkpoint', { projectPath, message, tags });
+}
+
+export async function listCheckpoints(projectPath: string): Promise<Checkpoint[]> {
+    return invokeCommand('list_checkpoints', { projectPath });
+}
+
+export async function restoreCheckpoint(projectPath: string, checkpointId: string): Promise<void> {
+    return invokeCommand('restore_checkpoint', { projectPath, checkpointId });
+}
+
+export async function compareCheckpoints(
+    projectPath: string,
+    fromId: string,
+    toId: string
+): Promise<CheckpointDiff> {
+    return invokeCommand('compare_checkpoints', { projectPath, fromId, toId });
+}
+
+export async function deleteCheckpoint(projectPath: string, checkpointId: string): Promise<void> {
+    return invokeCommand('delete_checkpoint', { projectPath, checkpointId });
 }
 
 

@@ -108,6 +108,10 @@ fn main() {
             commands::file::read_file_info,
             commands::file::decode_dds_to_png,
             commands::file::read_text_file,
+            commands::file::recolor_image,
+            commands::file::recolor_folder,
+            commands::file::colorize_image,
+            commands::file::colorize_folder,
             // Export commands
             commands::export::repath_project_cmd,
             commands::export::export_fantome,
@@ -126,6 +130,12 @@ fn main() {
             commands::updater::get_current_version,
             commands::updater::check_for_updates,
             commands::updater::download_and_install_update,
+            // Checkpoint commands
+            commands::checkpoint::create_checkpoint,
+            commands::checkpoint::list_checkpoints,
+            commands::checkpoint::restore_checkpoint,
+            commands::checkpoint::compare_checkpoints,
+            commands::checkpoint::delete_checkpoint,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
