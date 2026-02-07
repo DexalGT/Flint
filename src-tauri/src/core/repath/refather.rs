@@ -12,7 +12,11 @@ use ltk_meta::PropertyValueEnum;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use walkdir::WalkDir;
+use rayon::prelude::*;
+use dashmap::DashSet;
+use regex::Regex;
 
 /// Configuration for repathing operations
 /// 
@@ -141,14 +145,19 @@ pub fn repath_project(
     // Note: BIN concatenation is now handled by the organizer module.
     // This function focuses purely on path modification.
 
-    // Step 2: Scan BINs to collect referenced asset paths
-    let mut all_asset_paths: HashSet<String> = HashSet::new();
-    for bin_path in &bin_files {
+    // Step 2: Scan BINs to collect referenced asset paths (PARALLEL)
+    let all_asset_paths_set: DashSet<String> = DashSet::new();
+    bin_files.par_iter().for_each(|bin_path| {
         if let Ok(paths) = scan_bin_for_paths(bin_path) {
-            all_asset_paths.extend(paths);
+            for path in paths {
+                all_asset_paths_set.insert(path);
+            }
         }
-    }
-    tracing::info!("Found {} unique asset paths in BINs", all_asset_paths.len());
+    });
+    tracing::info!("Found {} unique asset paths in BINs", all_asset_paths_set.len());
+
+    // Convert DashSet to HashSet for existing_paths filtering
+    let all_asset_paths: HashSet<String> = all_asset_paths_set.into_iter().collect();
 
     // Step 3: Determine which paths actually exist
     // Use case-insensitive matching since Windows filesystem is case-insensitive
@@ -198,26 +207,32 @@ pub fn repath_project(
         result.missing_paths.push(path.clone());
     }
 
-    // Step 4: Repath BIN files
+    // Step 4: Repath BIN files (PARALLEL)
     let prefix = config.prefix();
-    for bin_path in &bin_files {
-        match repath_bin_file(bin_path, &existing_paths, &prefix) {
+    let bins_processed = AtomicUsize::new(0);
+    let paths_modified = AtomicUsize::new(0);
+
+    bin_files.par_iter().for_each(|bin_path| {
+        match repath_bin_file(bin_path, &existing_paths, &prefix, config) {
             Ok(modified_count) => {
-                result.bins_processed += 1;
-                result.paths_modified += modified_count;
+                bins_processed.fetch_add(1, Ordering::Relaxed);
+                paths_modified.fetch_add(modified_count, Ordering::Relaxed);
             }
             Err(e) => {
                 tracing::warn!("Failed to repath {}: {}", bin_path.display(), e);
             }
         }
-    }
+    });
+
+    result.bins_processed = bins_processed.load(Ordering::Relaxed);
+    result.paths_modified = paths_modified.load(Ordering::Relaxed);
 
     // Step 5: Relocate asset files
-    result.files_relocated = relocate_assets(file_base, &existing_paths, &prefix)?;
+    result.files_relocated = relocate_assets(file_base, &existing_paths, &prefix, config)?;
 
     // Step 6: Clean up unused files
     if config.cleanup_unused {
-        result.files_removed = cleanup_unused_files(file_base, &existing_paths, &prefix)?;
+        result.files_removed = cleanup_unused_files(file_base, &existing_paths, &prefix, config)?;
     }
 
     // Step 7: Clean up irrelevant extracted BINs
@@ -305,19 +320,91 @@ fn normalize_path(s: &str) -> String {
     s.to_lowercase().replace('\\', "/")
 }
 
-fn apply_prefix_to_path(path: &str, prefix: &str) -> String {
+fn apply_prefix_to_path(path: &str, prefix: &str, config: &RepathConfig) -> String {
     let lower = path.to_lowercase();
-    if lower.starts_with("assets/") {
-        format!("ASSETS/{}{}", prefix, &path[6..])
+
+    // Strip the original prefix (assets/ or data/)
+    let stripped = if lower.starts_with("assets/") {
+        &path[7..]  // Skip "assets/"
     } else if lower.starts_with("data/") {
-        format!("ASSETS/{}{}", prefix, &path[4..])
+        &path[5..]  // Skip "data/"
     } else {
-        format!("ASSETS/{}/{}", prefix, path)
+        path
+    };
+
+    // Step 1: Replace champion folder with project folder
+    // Path format: characters/{champion}/... → characters/{project}/...
+    let champion_replaced = replace_champion_with_project(stripped, config);
+
+    // Step 2: Remap skin IDs: Replace ALL skin references with target_skin_id
+    let remapped = remap_skin_ids(&champion_replaced, config.target_skin_id);
+
+    // Step 3: Add new prefix: ASSETS/{creator}/...
+    format!("ASSETS/{}/{}", prefix, remapped)
+}
+
+/// Replace champion folder name with project name in paths
+/// Example: characters/renekton/skins/... → characters/renny/skins/...
+fn replace_champion_with_project(path: &str, config: &RepathConfig) -> String {
+    let champion_lower = config.champion.to_lowercase();
+    let parts: Vec<&str> = path.split('/').collect();
+
+    // Look for pattern: characters/{champion}/...
+    if parts.len() >= 2 && parts[0].to_lowercase() == "characters" {
+        // Check if the second segment matches the champion name
+        if parts[1].to_lowercase() == champion_lower {
+            // Replace champion with project
+            let mut new_parts = parts.clone();
+            new_parts[1] = &config.project_name;
+            return new_parts.join("/");
+        }
     }
+
+    // If no champion folder found, return as-is
+    path.to_string()
+}
+
+/// Remap all skin ID references in a path to the target skin ID
+/// Examples:
+///   - characters/renekton/skins/skin0/... → characters/renekton/skins/skin42/...
+///   - characters/renekton/skins/skin17/renekton_skin17_base.skn
+///     → characters/renekton/skins/skin42/renekton_skin42_base.skn
+///   - characters/kayn/animations/skin8.bin → characters/kayn/animations/skin42.bin
+fn remap_skin_ids(path: &str, target_skin_id: u32) -> String {
+    // Match skin folders: skins/skin0, skins/skin17, etc.
+    let skin_folder_re = Regex::new(r"(skins/skin)(\d+)(/?)").unwrap();
+    let mut result = skin_folder_re.replace_all(path, |caps: &regex::Captures| {
+        format!("{}{}{}",
+            &caps[1],                    // "skins/skin"
+            target_skin_id,              // "42"
+            &caps[3]                     // "/" or ""
+        )
+    }).to_string();
+
+    // Match animation paths: animations/skin8.bin → animations/skin42.bin
+    let animation_re = Regex::new(r"(animations/skin)(\d+)(\.bin)").unwrap();
+    result = animation_re.replace_all(&result, |caps: &regex::Captures| {
+        format!("{}{}{}",
+            &caps[1],                    // "animations/skin"
+            target_skin_id,              // "42"
+            &caps[3]                     // ".bin"
+        )
+    }).to_string();
+
+    // Match skin in filenames: renekton_skin17_base.skn → renekton_skin42_base.skn
+    let skin_filename_re = Regex::new(r"_skin(\d+)([_\.])").unwrap();
+    result = skin_filename_re.replace_all(&result, |caps: &regex::Captures| {
+        format!("_skin{}{}",
+            target_skin_id,              // "42"
+            &caps[2]                     // "_" or "."
+        )
+    }).to_string();
+
+    result
 }
 
 /// Repath a single BIN file
-fn repath_bin_file(bin_path: &Path, existing_paths: &HashSet<String>, prefix: &str) -> Result<usize> {
+fn repath_bin_file(bin_path: &Path, existing_paths: &HashSet<String>, prefix: &str, config: &RepathConfig) -> Result<usize> {
     let data = fs::read(bin_path).map_err(|e| Error::io_with_path(e, bin_path))?;
     let mut bin = read_bin(&data)
         .map_err(|e| Error::InvalidInput(format!("Failed to parse BIN: {}", e)))?;
@@ -326,7 +413,7 @@ fn repath_bin_file(bin_path: &Path, existing_paths: &HashSet<String>, prefix: &s
 
     for object in bin.objects.values_mut() {
         for prop in object.properties.values_mut() {
-            modified_count += repath_value(&mut prop.value, existing_paths, prefix);
+            modified_count += repath_value(&mut prop.value, existing_paths, prefix, config);
         }
     }
 
@@ -342,7 +429,7 @@ fn repath_bin_file(bin_path: &Path, existing_paths: &HashSet<String>, prefix: &s
 }
 
 /// Recursively repath string values in a PropertyValueEnum
-fn repath_value(value: &mut PropertyValueEnum, existing_paths: &HashSet<String>, prefix: &str) -> usize {
+fn repath_value(value: &mut PropertyValueEnum, existing_paths: &HashSet<String>, prefix: &str, config: &RepathConfig) -> usize {
     let mut count = 0;
 
     match value {
@@ -350,41 +437,41 @@ fn repath_value(value: &mut PropertyValueEnum, existing_paths: &HashSet<String>,
             if is_asset_path(&s.0) {
                 let normalized = normalize_path(&s.0);
                 if existing_paths.contains(&normalized) {
-                    s.0 = apply_prefix_to_path(&s.0, prefix);
+                    s.0 = apply_prefix_to_path(&s.0, prefix, config);
                     count += 1;
                 }
             }
         }
         PropertyValueEnum::Container(c) => {
             for item in &mut c.items {
-                count += repath_value(item, existing_paths, prefix);
+                count += repath_value(item, existing_paths, prefix, config);
             }
         }
         PropertyValueEnum::UnorderedContainer(c) => {
             for item in &mut c.0.items {
-                count += repath_value(item, existing_paths, prefix);
+                count += repath_value(item, existing_paths, prefix, config);
             }
         }
         PropertyValueEnum::Struct(s) => {
             for prop in s.properties.values_mut() {
-                count += repath_value(&mut prop.value, existing_paths, prefix);
+                count += repath_value(&mut prop.value, existing_paths, prefix, config);
             }
         }
         PropertyValueEnum::Embedded(e) => {
             for prop in e.0.properties.values_mut() {
-                count += repath_value(&mut prop.value, existing_paths, prefix);
+                count += repath_value(&mut prop.value, existing_paths, prefix, config);
             }
         }
         PropertyValueEnum::Optional(o) => {
             if let Some(inner) = &mut o.value {
-                count += repath_value(inner.as_mut(), existing_paths, prefix);
+                count += repath_value(inner.as_mut(), existing_paths, prefix, config);
             }
         }
         PropertyValueEnum::Map(m) => {
             // Note: Map keys are immutable (wrapped in PropertyValueUnsafeEq)
             // Only values can be repathed
             for val in m.entries.values_mut() {
-                count += repath_value(val, existing_paths, prefix);
+                count += repath_value(val, existing_paths, prefix, config);
             }
         }
         _ => {}
@@ -393,38 +480,57 @@ fn repath_value(value: &mut PropertyValueEnum, existing_paths: &HashSet<String>,
     count
 }
 
-fn relocate_assets(content_base: &Path, existing_paths: &HashSet<String>, prefix: &str) -> Result<usize> {
+fn relocate_assets(content_base: &Path, existing_paths: &HashSet<String>, prefix: &str, config: &RepathConfig) -> Result<usize> {
     let mut relocated = 0;
 
     for path in existing_paths {
+        // Skip BIN files EXCEPT concat.bin (which needs to move to match its repathed reference)
         if path.to_lowercase().ends_with(".bin") {
-            continue;
+            // Allow concat.bin to be relocated
+            if !path.to_lowercase().contains("__concat") {
+                continue;
+            }
         }
-        
+
         let source = content_base.join(path);
-        let new_path = apply_prefix_to_path(path, prefix);
+        let new_path = apply_prefix_to_path(path, prefix, config);
         let dest = content_base.join(&new_path);
 
+        // Skip if source doesn't exist
+        if !source.exists() {
+            continue;
+        }
+
+        // Create destination directory
         if let Some(parent) = dest.parent() {
             fs::create_dir_all(parent).map_err(|e| Error::io_with_path(e, parent))?;
         }
 
-        if source.exists() {
-            fs::copy(&source, &dest).map_err(|e| Error::io_with_path(e, &source))?;
-            fs::remove_file(&source).map_err(|e| Error::io_with_path(e, &source))?;
-            relocated += 1;
+        // Try rename first (fast, same-device), fallback to copy+remove (cross-device)
+        match fs::rename(&source, &dest) {
+            Ok(_) => {
+                tracing::debug!("Renamed (fast): {} -> {}", source.display(), dest.display());
+                relocated += 1;
+            }
+            Err(_) => {
+                // Cross-device move, fallback to copy+remove
+                fs::copy(&source, &dest).map_err(|e| Error::io_with_path(e, &source))?;
+                fs::remove_file(&source).map_err(|e| Error::io_with_path(e, &source))?;
+                tracing::debug!("Copied (cross-device): {} -> {}", source.display(), dest.display());
+                relocated += 1;
+            }
         }
     }
 
     Ok(relocated)
 }
 
-fn cleanup_unused_files(content_base: &Path, referenced_paths: &HashSet<String>, prefix: &str) -> Result<usize> {
+fn cleanup_unused_files(content_base: &Path, referenced_paths: &HashSet<String>, prefix: &str, config: &RepathConfig) -> Result<usize> {
     let mut removed = 0;
 
     let expected_paths: HashSet<String> = referenced_paths
         .iter()
-        .map(|p| normalize_path(&apply_prefix_to_path(p, prefix)))
+        .map(|p| normalize_path(&apply_prefix_to_path(p, prefix, config)))
         .collect();
 
     for entry in WalkDir::new(content_base)
@@ -436,6 +542,7 @@ fn cleanup_unused_files(content_base: &Path, referenced_paths: &HashSet<String>,
             continue;
         }
 
+        // Skip BIN files (handled by cleanup_irrelevant_bins)
         if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
             if ext.eq_ignore_ascii_case("bin") {
                 continue;
@@ -444,10 +551,18 @@ fn cleanup_unused_files(content_base: &Path, referenced_paths: &HashSet<String>,
 
         if let Ok(rel_path) = path.strip_prefix(content_base) {
             let normalized = normalize_path(&rel_path.to_string_lossy());
-            if !expected_paths.contains(&normalized) {
+
+            // Also remove files NOT in the new ASSETS/{creator}/characters/{project}/ tree
+            let in_new_tree = normalized.to_lowercase().starts_with(&format!(
+                "assets/{}/characters/",
+                prefix.to_lowercase()
+            ));
+
+            if !expected_paths.contains(&normalized) || !in_new_tree {
                 if let Err(e) = fs::remove_file(path) {
                     tracing::warn!("Failed to remove {}: {}", path.display(), e);
                 } else {
+                    tracing::debug!("Removed unused file: {}", normalized);
                     removed += 1;
                 }
             }
@@ -613,10 +728,91 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_prefix_to_path() {
+    fn test_remap_skin_ids() {
+        // Test folder remapping
         assert_eq!(
-            apply_prefix_to_path("assets/characters/ahri/skin.dds", "SirDexal/MyMod"),
-            "ASSETS/SirDexal/MyMod/characters/ahri/skin.dds"
+            remap_skin_ids("characters/renekton/skins/skin0/base.skn", 42),
+            "characters/renekton/skins/skin42/base.skn"
+        );
+
+        // Test filename remapping
+        assert_eq!(
+            remap_skin_ids("characters/renekton/skins/skin17/renekton_skin17_base.skn", 42),
+            "characters/renekton/skins/skin42/renekton_skin42_base.skn"
+        );
+
+        // Test animation remapping
+        assert_eq!(
+            remap_skin_ids("characters/kayn/animations/skin8.bin", 42),
+            "characters/kayn/animations/skin42.bin"
+        );
+
+        // Test padded skin IDs
+        assert_eq!(
+            remap_skin_ids("characters/ahri/skins/skin00/ahri_skin00_tx_cm.dds", 5),
+            "characters/ahri/skins/skin5/ahri_skin5_tx_cm.dds"
+        );
+    }
+
+    #[test]
+    fn test_replace_champion_with_project() {
+        let config = RepathConfig {
+            creator_name: "SirDexal".to_string(),
+            project_name: "Renny".to_string(),
+            champion: "Renekton".to_string(),
+            target_skin_id: 42,
+            cleanup_unused: true,
+        };
+
+        // Test champion replacement
+        assert_eq!(
+            replace_champion_with_project("characters/renekton/skins/skin17/base.skn", &config),
+            "characters/Renny/skins/skin17/base.skn"
+        );
+
+        // Test case-insensitive matching
+        assert_eq!(
+            replace_champion_with_project("characters/Renekton/skins/skin0/base.skn", &config),
+            "characters/Renny/skins/skin0/base.skn"
+        );
+
+        // Test non-champion path (should return unchanged)
+        assert_eq!(
+            replace_champion_with_project("textures/some_texture.dds", &config),
+            "textures/some_texture.dds"
+        );
+    }
+
+    #[test]
+    fn test_apply_prefix_to_path_v2() {
+        let config = RepathConfig {
+            creator_name: "SirDexal".to_string(),
+            project_name: "Renny".to_string(),
+            champion: "Renekton".to_string(),
+            target_skin_id: 42,
+            cleanup_unused: true,
+        };
+
+        // Test new structure: ASSETS/{creator}/characters/{project}/...
+        // Input: assets/characters/renekton/skins/skin17/renekton_skin17_base.skn
+        // Expected: ASSETS/SirDexal/Renny/characters/Renny/skins/skin42/renekton_skin42_base.skn
+        assert_eq!(
+            apply_prefix_to_path(
+                "assets/characters/renekton/skins/skin17/renekton_skin17_base.skn",
+                "SirDexal/Renny",
+                &config
+            ),
+            "ASSETS/SirDexal/Renny/characters/Renny/skins/skin42/renekton_skin42_base.skn"
+        );
+
+        // Test with data/ prefix
+        assert_eq!(
+            apply_prefix_to_path(
+                "data/characters/renekton/skins/skin0.bin",
+                "SirDexal/Renny",
+                &config
+            ),
+            "ASSETS/SirDexal/Renny/characters/Renny/skins/skin42.bin"
         );
     }
 }

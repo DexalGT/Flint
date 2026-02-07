@@ -106,7 +106,7 @@ pub fn create_concat_bin(
     main_bin: &BinTree,
     project_name: &str,
     creator_name: &str,
-    champion: &str,
+    _champion: &str,  // No longer used in path generation but kept for API compatibility
     content_base: &Path,
     path_mappings: &HashMap<String, String>,
 ) -> Result<ConcatResult> {
@@ -219,11 +219,13 @@ pub fn create_concat_bin(
     let object_count = concat_bin.objects.len();
 
     // 5. Generate concat path (sanitize names: replace spaces with dashes)
+    // New naming: data/{creator}_{project}__Concat.bin
+    // Champion is no longer in the folder hierarchy, so omit from filename for consistency
     let creator_sanitized = creator_name.replace(' ', "-");
     let project_sanitized = project_name.replace(' ', "-");
     let concat_path = format!(
-        "data/{}_{}_{}__Concat.bin",
-        champion.to_lowercase(), creator_sanitized, project_sanitized
+        "data/{}_{}__Concat.bin",
+        creator_sanitized, project_sanitized
     );
 
     // 6. Save the concat BIN immediately

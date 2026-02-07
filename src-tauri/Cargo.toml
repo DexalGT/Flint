@@ -46,6 +46,8 @@ indexmap = { version = "2.1", features = ["serde"] }
 # Parallel processing for hash loading
 rayon = "1.10"
 futures = "0.3"
+# Thread-safe concurrent collections for parallel BIN processing
+dashmap = "6.0"
 
 # Texture handling (DDS and TEX via league-toolkit)
 ltk_texture = { version = "0.4", features = ["intel-tex"] }
