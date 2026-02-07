@@ -136,6 +136,7 @@ fn main() {
             commands::checkpoint::restore_checkpoint,
             commands::checkpoint::compare_checkpoints,
             commands::checkpoint::delete_checkpoint,
+            commands::checkpoint::read_checkpoint_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

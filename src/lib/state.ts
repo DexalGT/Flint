@@ -48,6 +48,9 @@ const initialState: AppState = {
     // Log panel
     logs: [],
     logPanelExpanded: false,
+
+    // Skipped update version
+    skippedUpdateVersion: null,
 };
 
 // =============================================================================
@@ -383,6 +386,7 @@ export function AppProvider({ children }: AppProviderProps) {
                     leaguePath: settings.leaguePath || null,
                     recentProjects: settings.recentProjects || [],
                     creatorName: settings.creatorName || null,
+                    skippedUpdateVersion: settings.skippedUpdateVersion || null,
                 };
             }
         } catch (error) {
@@ -398,12 +402,13 @@ export function AppProvider({ children }: AppProviderProps) {
                 leaguePath: state.leaguePath,
                 recentProjects: state.recentProjects,
                 creatorName: state.creatorName,
+                skippedUpdateVersion: state.skippedUpdateVersion,
             };
             localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
         } catch (error) {
             console.error('[Flint] Failed to save settings:', error);
         }
-    }, [state.leaguePath, state.recentProjects, state.creatorName]);
+    }, [state.leaguePath, state.recentProjects, state.creatorName, state.skippedUpdateVersion]);
 
     // Toast ID counter
     const toastIdRef = React.useRef(0);

@@ -128,6 +128,9 @@ export interface AppState {
 
     // Context menu
     contextMenu: ContextMenuState | null;
+
+    // Skipped update version (persisted)
+    skippedUpdateVersion: string | null;
 }
 
 // =============================================================================
@@ -183,4 +186,20 @@ export interface CheckpointDiff {
     added: FileEntry[];
     modified: [FileEntry, FileEntry][];
     deleted: FileEntry[];
+}
+
+export interface CheckpointProgress {
+    phase: string;
+    current: number;
+    total: number;
+}
+
+export type CheckpointFileContent =
+    | { type: 'image'; data: string; width: number; height: number }
+    | { type: 'text'; data: string }
+    | { type: 'binary'; size: number };
+
+export interface DownloadProgress {
+    downloaded: number;
+    total: number;
 }

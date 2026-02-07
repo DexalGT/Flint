@@ -248,7 +248,7 @@ export const NewProjectModal: React.FC = () => {
                             onChange={(e) => setChampionSearch(e.target.value)}
                         />
                         <div className="champion-grid">
-                            {filteredChampions.slice(0, 50).map((champ) => (
+                            {filteredChampions.map((champ) => (
                                 <div
                                     key={champ.id}
                                     className={`champion-card ${selectedChampion?.id === champ.id ? 'champion-card--selected' : ''}`}

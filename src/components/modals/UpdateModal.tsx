@@ -1,16 +1,30 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAppState } from '../../lib/state';
 import * as api from '../../lib/api';
-import type { UpdateInfo } from '../../lib/types';
+import type { UpdateInfo, DownloadProgress } from '../../lib/types';
 import { getIcon } from '../../lib/fileIcons';
+import { listen } from '@tauri-apps/api/event';
 
 export const UpdateModal: React.FC = () => {
-    const { state, closeModal, showToast } = useAppState();
+    const { state, dispatch, closeModal, showToast } = useAppState();
     const [isDownloading, setIsDownloading] = useState(false);
     const [downloadProgress, setDownloadProgress] = useState(0);
 
     const isVisible = state.activeModal === 'updateAvailable';
     const updateInfo = state.modalOptions as UpdateInfo | null;
+
+    // Listen for real download progress events
+    useEffect(() => {
+        let unlisten: (() => void) | null = null;
+        listen<DownloadProgress>('update-download-progress', (event) => {
+            const { downloaded, total } = event.payload;
+            if (total > 0) {
+                setDownloadProgress(Math.round((downloaded / total) * 100));
+            }
+        }).then(fn => { unlisten = fn; });
+
+        return () => { if (unlisten) unlisten(); };
+    }, []);
 
     const handleUpdateNow = async () => {
         if (!updateInfo?.download_url) {
@@ -21,17 +35,11 @@ export const UpdateModal: React.FC = () => {
         setIsDownloading(true);
         setDownloadProgress(0);
 
-        const progressInterval = setInterval(() => {
-            setDownloadProgress(prev => Math.min(prev + 10, 90));
-        }, 500);
-
         try {
             showToast('info', 'Downloading update...');
             await api.downloadAndInstallUpdate(updateInfo.download_url);
-            clearInterval(progressInterval);
             setDownloadProgress(100);
         } catch (err) {
-            clearInterval(progressInterval);
             setIsDownloading(false);
             setDownloadProgress(0);
             const message = err instanceof Error ? err.message : 'Download failed';
@@ -39,7 +47,17 @@ export const UpdateModal: React.FC = () => {
         }
     };
 
-    const handleSkip = () => closeModal();
+    const handleSkip = () => {
+        // Persist skipped version so we don't ask again
+        if (updateInfo?.latest_version) {
+            dispatch({
+                type: 'SET_STATE',
+                payload: { skippedUpdateVersion: updateInfo.latest_version },
+            });
+        }
+        closeModal();
+    };
+
     const handleRemindLater = () => closeModal();
 
     if (!isVisible || !updateInfo) return null;
@@ -136,7 +154,7 @@ export const UpdateModal: React.FC = () => {
                                     height: '100%',
                                     width: `${downloadProgress}%`,
                                     background: 'var(--accent-primary)',
-                                    transition: 'width 0.3s ease',
+                                    transition: 'width 0.2s ease',
                                 }} />
                             </div>
                         </div>

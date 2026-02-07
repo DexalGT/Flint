@@ -646,7 +646,7 @@ export async function downloadAndInstallUpdate(downloadUrl: string): Promise<voi
 // Checkpoint Commands
 // =============================================================================
 
-import type { Checkpoint, CheckpointDiff } from './types';
+import type { Checkpoint, CheckpointDiff, CheckpointFileContent } from './types';
 
 export async function createCheckpoint(
     projectPath: string,
@@ -674,6 +674,14 @@ export async function compareCheckpoints(
 
 export async function deleteCheckpoint(projectPath: string, checkpointId: string): Promise<void> {
     return invokeCommand('delete_checkpoint', { projectPath, checkpointId });
+}
+
+export async function readCheckpointFile(
+    projectPath: string,
+    hash: string,
+    filePath: string
+): Promise<CheckpointFileContent> {
+    return invokeCommand('read_checkpoint_file', { projectPath, hash, filePath });
 }
 
 

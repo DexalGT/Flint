@@ -143,6 +143,11 @@ export const App: React.FC = () => {
             console.log('[Flint] Checking for updates...');
             const updateInfo = await api.checkForUpdates();
             if (updateInfo.available) {
+                // Skip if user already skipped this version
+                if (state.skippedUpdateVersion === updateInfo.latest_version) {
+                    console.log(`[Flint] Update ${updateInfo.latest_version} was skipped by user`);
+                    return;
+                }
                 console.log(`[Flint] Update available: ${updateInfo.current_version} → ${updateInfo.latest_version}`);
                 openModal('updateAvailable', updateInfo as unknown as Record<string, unknown>);
             } else {
