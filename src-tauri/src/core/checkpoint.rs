@@ -316,7 +316,7 @@ impl CheckpointManager {
             .collect();
 
         // Sort by depth descending (deepest dirs first)
-        dirs.sort_by(|a, b| b.components().count().cmp(&a.components().count()));
+        dirs.sort_by_key(|b| std::cmp::Reverse(b.components().count()));
 
         for dir in dirs {
             if let Ok(mut entries) = fs::read_dir(&dir) {
