@@ -4,8 +4,8 @@
  * Spawns ritobin-lsp as a Tauri sidecar and communicates over stdio using the
  * LSP JSON-RPC protocol (Content-Length framing). No extra npm packages needed.
  *
- * The binary must be placed at:
- *   src-tauri/binaries/ritobin-lsp-x86_64-pc-windows-msvc.exe
+ * Requires ritobin-lsp.exe to be on PATH.
+ * Build and install it: cargo install --path . (inside the ritobin-lsp crate)
  *
  * Features provided when connected:
  *   - Inline diagnostics (parse errors, type mismatches)
@@ -96,10 +96,12 @@ export class BinLspClient {
         const model = editorInstance.getModel();
         if (!model) { this.setStatus('error'); return; }
 
-        // Spawn the sidecar ──────────────────────────────────────────────────
+        // Spawn the LSP binary from PATH ─────────────────────────────────────
+        // Build ritobin-lsp and add it to PATH: cargo install --path .
+        // (in the ritobin-lsp crate directory)
         let child: Child;
         try {
-            const cmd = Command.sidecar('binaries/ritobin-lsp');
+            const cmd = Command.create('ritobin-lsp');
             cmd.stdout.on('data', (chunk: string) => this.onChunk(chunk, monaco));
             cmd.stderr.on('data', (line: string) => console.debug('[ritobin-lsp]', line));
             cmd.on('close', () => {
