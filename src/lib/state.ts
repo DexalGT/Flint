@@ -212,6 +212,7 @@ function appReducer(state: AppState, action: Action): AppState {
             const tabId = action.payload;
             const newTabs = state.openTabs.filter(t => t.id !== tabId);
             let newActiveId: string | null = state.activeTabId;
+            let newView = state.currentView;
 
             // If we closed the active tab, switch to another
             if (state.activeTabId === tabId) {
@@ -220,8 +221,18 @@ function appReducer(state: AppState, action: Action): AppState {
                     // Switch to previous tab, or first if we closed the first
                     const newIndex = Math.max(0, closedIndex - 1);
                     newActiveId = newTabs[newIndex]?.id || null;
+                    newView = 'preview';
+                } else if (state.extractSessions.length > 0) {
+                    // Fall back to an extract session
+                    newActiveId = null;
+                    newView = 'extract';
+                } else if (state.wadExplorer.isOpen) {
+                    // Fall back to WAD explorer
+                    newActiveId = null;
+                    newView = 'wad-explorer';
                 } else {
                     newActiveId = null;
+                    newView = 'welcome';
                 }
             }
 
@@ -229,7 +240,7 @@ function appReducer(state: AppState, action: Action): AppState {
                 ...state,
                 openTabs: newTabs,
                 activeTabId: newActiveId,
-                currentView: newActiveId ? state.currentView : 'welcome',
+                currentView: newView,
             };
         }
 
@@ -240,7 +251,7 @@ function appReducer(state: AppState, action: Action): AppState {
             return {
                 ...state,
                 activeTabId: tabId,
-                activeExtractId: null,
+                // Don't null activeExtractId — it's a "last active" pointer used when switching back
                 currentView: 'preview',
             };
         }
@@ -380,25 +391,33 @@ function appReducer(state: AppState, action: Action): AppState {
             return {
                 ...state,
                 currentView: 'wad-explorer',
-                activeTabId: null,
-                activeExtractId: null,
+                // Don't null out activeTabId/activeExtractId — they serve as "last active" pointers
                 wadExplorer: { ...state.wadExplorer, isOpen: true },
             };
 
-        case 'CLOSE_WAD_EXPLORER':
+        case 'CLOSE_WAD_EXPLORER': {
+            // activeTabId/activeExtractId still point to the last-used tab, use them for fallback
+            const fallbackView = state.activeTabId && state.openTabs.find(t => t.id === state.activeTabId)
+                ? 'preview'
+                : state.activeExtractId && state.extractSessions.find(s => s.id === state.activeExtractId)
+                ? 'extract'
+                : state.openTabs.length > 0 ? 'preview'
+                : state.extractSessions.length > 0 ? 'extract'
+                : 'welcome';
+            const fallbackTabId = fallbackView === 'preview'
+                ? (state.activeTabId ?? state.openTabs[state.openTabs.length - 1]?.id ?? null)
+                : state.activeTabId;
+            const fallbackExtractId = fallbackView === 'extract'
+                ? (state.activeExtractId ?? state.extractSessions[state.extractSessions.length - 1]?.id ?? null)
+                : state.activeExtractId;
             return {
                 ...state,
-                currentView: state.openTabs.length > 0 ? 'preview'
-                    : state.extractSessions.length > 0 ? 'extract'
-                    : 'welcome',
-                activeTabId: state.openTabs.length > 0
-                    ? (state.activeTabId ?? state.openTabs[state.openTabs.length - 1].id)
-                    : null,
-                activeExtractId: state.openTabs.length === 0 && state.extractSessions.length > 0
-                    ? state.extractSessions[state.extractSessions.length - 1].id
-                    : null,
+                currentView: fallbackView,
+                activeTabId: fallbackTabId,
+                activeExtractId: fallbackExtractId,
                 wadExplorer: { ...state.wadExplorer, isOpen: false },
             };
+        }
 
         case 'SET_WAD_EXPLORER_SCAN': {
             const { status, wads: gameWads, error } = action.payload;
@@ -507,7 +526,7 @@ function appReducer(state: AppState, action: Action): AppState {
                 ...state,
                 extractSessions: [...state.extractSessions, newSession],
                 activeExtractId: id,
-                activeTabId: null,
+                // Don't null activeTabId — it's a "last active" pointer used when switching back
                 currentView: 'extract',
             };
         }
@@ -516,18 +535,22 @@ function appReducer(state: AppState, action: Action): AppState {
             const sessionId = action.payload;
             const newSessions = state.extractSessions.filter(s => s.id !== sessionId);
             let newActiveExtractId = state.activeExtractId;
-            let newActiveTabId = state.activeTabId;
             let newView = state.currentView;
 
             if (state.activeExtractId === sessionId) {
-                // Switch to last remaining extract session, or last project tab, or welcome
+                // Switch to last remaining extract session, or last project tab, or WAD explorer, or welcome
                 if (newSessions.length > 0) {
                     newActiveExtractId = newSessions[newSessions.length - 1].id;
                     newView = 'extract';
+                } else if (state.activeTabId && state.openTabs.find(t => t.id === state.activeTabId)) {
+                    newActiveExtractId = null;
+                    newView = 'preview';
                 } else if (state.openTabs.length > 0) {
                     newActiveExtractId = null;
-                    newActiveTabId = state.openTabs[state.openTabs.length - 1].id;
                     newView = 'preview';
+                } else if (state.wadExplorer.isOpen) {
+                    newActiveExtractId = null;
+                    newView = 'wad-explorer';
                 } else {
                     newActiveExtractId = null;
                     newView = 'welcome';
@@ -538,7 +561,6 @@ function appReducer(state: AppState, action: Action): AppState {
                 ...state,
                 extractSessions: newSessions,
                 activeExtractId: newActiveExtractId,
-                activeTabId: newActiveTabId,
                 currentView: newView,
             };
         }
@@ -549,7 +571,7 @@ function appReducer(state: AppState, action: Action): AppState {
             return {
                 ...state,
                 activeExtractId: sessionId,
-                activeTabId: null,
+                // Don't null activeTabId — it's a "last active" pointer used when switching back
                 currentView: 'extract',
             };
         }

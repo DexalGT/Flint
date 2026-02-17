@@ -68,9 +68,9 @@ export const App: React.FC = () => {
             const s = stateRef.current;
             if (s.currentView === 'wad-explorer') {
                 dispatch({ type: 'CLOSE_WAD_EXPLORER' });
-            } else if (s.activeExtractId) {
+            } else if (s.currentView === 'extract' && s.activeExtractId) {
                 dispatch({ type: 'CLOSE_EXTRACT_SESSION', payload: s.activeExtractId });
-            } else if (s.activeTabId) {
+            } else if (s.currentView === 'preview' && s.activeTabId) {
                 dispatch({ type: 'REMOVE_TAB', payload: s.activeTabId });
             }
         });
@@ -226,10 +226,10 @@ export const App: React.FC = () => {
         setLeftPanelWidth(prev => (prev === 48 ? 280 : 48));
     }, []);
 
-    // Show left panel if a project tab OR an extract session is active
+    // Use currentView as the single source of truth for what's displayed
     const isWadExplorer = state.currentView === 'wad-explorer';
-    const hasProject = (!!state.activeTabId || !!state.activeExtractId) && !isWadExplorer && state.currentView !== 'welcome';
-    const isExtractMode = !!state.activeExtractId && !isWadExplorer;
+    const isExtractMode = state.currentView === 'extract';
+    const hasProject = state.currentView === 'preview' || isExtractMode;
 
     // Check if first-time setup is needed
     useEffect(() => {
@@ -242,9 +242,13 @@ export const App: React.FC = () => {
         <>
             <TopBar />
             <div className="main-content" id="main-content">
-                {isWadExplorer ? (
-                    <WadExplorer />
-                ) : (
+                {/* Keep WadExplorer mounted when open — toggling display avoids the ~10s rescan on every switch */}
+                {state.wadExplorer.isOpen && (
+                    <div style={{ display: isWadExplorer ? 'contents' : 'none' }}>
+                        <WadExplorer />
+                    </div>
+                )}
+                {!isWadExplorer && (
                     <>
                         {hasProject && (
                             <>

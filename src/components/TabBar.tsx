@@ -145,6 +145,8 @@ export const TabBar: React.FC = () => {
 
     const isWadExplorerOpen = state.wadExplorer.isOpen;
     const isWadExplorerActive = state.currentView === 'wad-explorer';
+    const isProjectActive = state.currentView === 'preview';
+    const isExtractActive = state.currentView === 'extract';
 
     // Don't render if nothing is open
     if (state.openTabs.length === 0 && state.extractSessions.length === 0 && !isWadExplorerOpen) {
@@ -182,7 +184,7 @@ export const TabBar: React.FC = () => {
                     <Tab
                         key={tab.id}
                         tab={tab}
-                        isActive={tab.id === state.activeTabId && !isWadExplorerActive}
+                        isActive={tab.id === state.activeTabId && isProjectActive}
                         onSwitch={() => handleSwitchTab(tab.id)}
                         onClose={(e) => handleCloseTab(e, tab.id)}
                     />
@@ -191,7 +193,7 @@ export const TabBar: React.FC = () => {
                     <ExtractTab
                         key={session.id}
                         session={session}
-                        isActive={session.id === state.activeExtractId && !isWadExplorerActive}
+                        isActive={session.id === state.activeExtractId && isExtractActive}
                         onSwitch={() => handleSwitchExtract(session.id)}
                         onClose={(e) => handleCloseExtract(e, session.id)}
                     />

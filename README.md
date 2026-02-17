@@ -22,11 +22,25 @@
 - Windows Registry integration for reliable detection
 - Real-time validation of game files
 
+### 🗂️ **Multi-Tab Workspace**
+- Unified tab bar for all open work: projects, individual WAD sessions, and WAD Explorer
+- Switch freely between any tab without losing state
+- Close individual tabs independently; each tab type has its own fallback chain
+
+### 🌐 **WAD Explorer**
+- Browse the entire game's WAD archive library without extracting anything
+- Virtual file system tree organized by category (Champions, Maps, etc.)
+- Lazy-load WAD chunks on demand — only reads what you expand
+- Instant file preview (textures, BIN, audio, hex) inline in the panel
+- Debounced search with regex toggle across all loaded WADs
+- Quick-action cards for fast filtering by asset type (Textures, BIN, Audio, Models)
+
 ### 📦 **WAD Archive Operations**
 - High-performance WAD file reading and extraction using `league-toolkit`
 - Automatic hash resolution via CommunityDragon hashtables
 - Selective asset extraction for champions and skins
 - Support for ZSTD and Deflate compression formats
+- Browse individual `.wad.client` files in a dedicated tab session
 
 ### 🔧 **BIN File Editor**
 - Full BIN property file parsing via `ltk_ritobin` / `ltk_meta`
@@ -117,12 +131,14 @@ flint/
 ├── src/                        # React TypeScript Frontend
 │   ├── main.tsx                # Application entry point
 │   ├── components/             # UI Components
-│   │   ├── App.tsx             # Root component
-│   │   ├── TopBar.tsx          # Navigation & project info
-│   │   ├── FileTree.tsx        # Asset file browser
+│   │   ├── App.tsx             # Root component & layout
+│   │   ├── TopBar.tsx          # Navigation, tab bar & export actions
+│   │   ├── FileTree.tsx        # Project asset file browser
+│   │   ├── WadExplorer.tsx     # Unified game WAD browser (VFS)
+│   │   ├── WadBrowser.tsx      # Single WAD session browser panel
+│   │   ├── WadPreviewPanel.tsx # In-memory WAD chunk preview
 │   │   ├── CenterPanel.tsx     # Dynamic content area
 │   │   ├── PreviewPanel.tsx    # Asset preview container
-│   │   ├── TabBar.tsx          # Preview tab management
 │   │   ├── StatusBar.tsx       # Status & hash info
 │   │   ├── WelcomeScreen.tsx   # Landing page
 │   │   ├── ContextMenu.tsx     # Right-click menus
