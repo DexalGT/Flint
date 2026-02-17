@@ -4,7 +4,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core';
-import type { HashStatus, Project, FileTreeNode, Champion } from './types';
+import type { HashStatus, Project, FileTreeNode, Champion, GameWadInfo } from './types';
 
 // =============================================================================
 // Error Handling
@@ -48,6 +48,9 @@ export class FlintError extends Error {
             'read_wad': 'Failed to read WAD file. The file may be corrupted.',
             'get_wad_chunks': 'Failed to read WAD contents.',
             'extract_wad': 'Failed to extract files from WAD.',
+            'read_wad_chunk_data': 'Failed to read chunk from WAD.',
+            'scan_game_wads': 'Failed to scan game WAD directory.',
+            'decode_bytes_to_png': 'Failed to decode texture.',
             'convert_bin_to_text': 'Failed to convert BIN to text format.',
             'convert_bin_to_json': 'Failed to convert BIN to JSON format.',
             'convert_text_to_bin': 'Failed to convert text to BIN format.',
@@ -287,7 +290,17 @@ export async function readWad(wadPath: string): Promise<{ version: string; chunk
 export async function getWadChunks(
     wadPath: string
 ): Promise<Array<{ hash: string; path: string | null; size: number }>> {
-    return invokeCommand('get_wad_chunks', { wadPath });
+    return invokeCommand('get_wad_chunks', { path: wadPath });
+}
+
+export interface WadChunkBatch {
+    path: string;
+    chunks: Array<{ hash: string; path: string | null; size: number }>;
+    error: string | null;
+}
+
+export async function loadAllWadChunks(paths: string[]): Promise<WadChunkBatch[]> {
+    return invokeCommand('load_all_wad_chunks', { paths });
 }
 
 export async function extractWad(
@@ -296,6 +309,22 @@ export async function extractWad(
     hashes: string[] | null = null
 ): Promise<{ extracted: number }> {
     return invokeCommand('extract_wad', { wadPath, outputPath, hashes });
+}
+
+/**
+ * Read a single WAD chunk into memory without writing to disk.
+ * Returns the decompressed raw bytes of the chunk.
+ */
+export async function readWadChunkData(wadPath: string, hash: string): Promise<Uint8Array> {
+    const result = await invokeCommand<number[]>('read_wad_chunk_data', { wadPath, hash });
+    return new Uint8Array(result);
+}
+
+/**
+ * Scan a League Game/ directory for all .wad.client files, grouped by category.
+ */
+export async function scanGameWads(gamePath: string): Promise<GameWadInfo[]> {
+    return invokeCommand('scan_game_wads', { gamePath });
 }
 
 // =============================================================================
@@ -378,6 +407,14 @@ interface DecodedTexture {
  */
 export async function decodeDdsToPng(path: string): Promise<DecodedTexture> {
     return invokeCommand('decode_dds_to_png', { path });
+}
+
+/**
+ * Decode raw DDS/TEX bytes (already in memory) to a base64-encoded PNG.
+ * Used by the WAD browser for in-memory preview — no disk file needed.
+ */
+export async function decodeBytesToPng(data: Uint8Array): Promise<DecodedTexture> {
+    return invokeCommand('decode_bytes_to_png', { data: Array.from(data) });
 }
 
 export async function readTextFile(path: string): Promise<string> {

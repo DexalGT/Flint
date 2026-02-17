@@ -3,8 +3,8 @@
  * Uses React Context for global state with localStorage persistence
  */
 
-import React, { createContext, useContext, useReducer, useCallback, useEffect, ReactNode } from 'react';
-import type { AppState, ModalType, Toast, RecentProject, Project, FileTreeNode, Champion, LogEntry, ContextMenuState, ContextMenuOption, ProjectTab } from './types';
+import React, { createContext, useContext, useReducer, useCallback, useEffect, useMemo, ReactNode } from 'react';
+import type { AppState, ModalType, Toast, RecentProject, Project, FileTreeNode, Champion, LogEntry, ContextMenuState, ContextMenuOption, ProjectTab, WadChunk, ExtractSession, WadExplorerState, WadExplorerWad, GameWadInfo } from './types';
 
 // =============================================================================
 // Initial State
@@ -32,6 +32,22 @@ const initialState: AppState = {
     openTabs: [],
     activeTabId: null,
     recentProjects: [],
+
+    // WAD extract sessions
+    extractSessions: [],
+    activeExtractId: null,
+
+    // WAD Explorer
+    wadExplorer: {
+        isOpen: false,
+        wads: [],
+        scanStatus: 'idle',
+        scanError: null,
+        selected: null,
+        expandedWads: new Set<string>(),
+        expandedFolders: new Set<string>(),
+        searchQuery: '',
+    },
 
     // UI state
     currentView: 'welcome',
@@ -82,7 +98,27 @@ type Action =
     | { type: 'CLEAR_LOGS' }
     | { type: 'TOGGLE_LOG_PANEL' }
     | { type: 'OPEN_CONTEXT_MENU'; payload: ContextMenuState }
-    | { type: 'CLOSE_CONTEXT_MENU' };
+    | { type: 'CLOSE_CONTEXT_MENU' }
+    // WAD Explorer actions
+    | { type: 'OPEN_WAD_EXPLORER' }
+    | { type: 'CLOSE_WAD_EXPLORER' }
+    | { type: 'SET_WAD_EXPLORER_SCAN'; payload: { status: WadExplorerState['scanStatus']; wads?: GameWadInfo[]; error?: string } }
+    | { type: 'SET_WAD_EXPLORER_WAD_STATUS'; payload: { wadPath: string; status: WadExplorerWad['status']; chunks?: WadChunk[]; error?: string } }
+    | { type: 'BATCH_SET_WAD_STATUSES'; payload: Array<{ wadPath: string; status: WadExplorerWad['status']; chunks?: WadChunk[]; error?: string }> }
+    | { type: 'SET_WAD_EXPLORER_SELECTED'; payload: { wadPath: string; hash: string } | null }
+    | { type: 'TOGGLE_WAD_EXPLORER_WAD'; payload: string }
+    | { type: 'TOGGLE_WAD_EXPLORER_FOLDER'; payload: string }
+    | { type: 'SET_WAD_EXPLORER_SEARCH'; payload: string }
+    // Extract session actions
+    | { type: 'OPEN_EXTRACT_SESSION'; payload: { id: string; wadPath: string } }
+    | { type: 'CLOSE_EXTRACT_SESSION'; payload: string }
+    | { type: 'SWITCH_EXTRACT_TAB'; payload: string }
+    | { type: 'SET_EXTRACT_CHUNKS'; payload: { sessionId: string; chunks: WadChunk[] } }
+    | { type: 'SET_EXTRACT_PREVIEW'; payload: { sessionId: string; hash: string | null } }
+    | { type: 'TOGGLE_EXTRACT_FOLDER'; payload: { sessionId: string; folderPath: string } }
+    | { type: 'TOGGLE_EXTRACT_CHUNK'; payload: { sessionId: string; hash: string } }
+    | { type: 'SET_EXTRACT_SEARCH'; payload: { sessionId: string; query: string } }
+    | { type: 'SET_EXTRACT_LOADING'; payload: { sessionId: string; loading: boolean } };
 
 // =============================================================================
 // Reducer
@@ -93,6 +129,7 @@ let tabIdCounter = 0;
 function generateTabId(): string {
     return `tab-${Date.now()}-${++tabIdCounter}`;
 }
+
 
 // Helper to get active tab
 function getActiveTab(state: AppState): ProjectTab | null {
@@ -203,6 +240,7 @@ function appReducer(state: AppState, action: Action): AppState {
             return {
                 ...state,
                 activeTabId: tabId,
+                activeExtractId: null,
                 currentView: 'preview',
             };
         }
@@ -333,6 +371,262 @@ function appReducer(state: AppState, action: Action): AppState {
                 ...state,
                 contextMenu: null,
             };
+
+        // =====================================================================
+        // WAD Explorer Actions
+        // =====================================================================
+
+        case 'OPEN_WAD_EXPLORER':
+            return {
+                ...state,
+                currentView: 'wad-explorer',
+                activeTabId: null,
+                activeExtractId: null,
+                wadExplorer: { ...state.wadExplorer, isOpen: true },
+            };
+
+        case 'CLOSE_WAD_EXPLORER':
+            return {
+                ...state,
+                currentView: state.openTabs.length > 0 ? 'preview'
+                    : state.extractSessions.length > 0 ? 'extract'
+                    : 'welcome',
+                activeTabId: state.openTabs.length > 0
+                    ? (state.activeTabId ?? state.openTabs[state.openTabs.length - 1].id)
+                    : null,
+                activeExtractId: state.openTabs.length === 0 && state.extractSessions.length > 0
+                    ? state.extractSessions[state.extractSessions.length - 1].id
+                    : null,
+                wadExplorer: { ...state.wadExplorer, isOpen: false },
+            };
+
+        case 'SET_WAD_EXPLORER_SCAN': {
+            const { status, wads: gameWads, error } = action.payload;
+            const newWads: WadExplorerWad[] = gameWads
+                ? gameWads.map(w => ({ ...w, status: 'idle', chunks: [] }))
+                : state.wadExplorer.wads;
+            return {
+                ...state,
+                wadExplorer: {
+                    ...state.wadExplorer,
+                    scanStatus: status,
+                    scanError: error ?? null,
+                    wads: newWads,
+                },
+            };
+        }
+
+        case 'SET_WAD_EXPLORER_WAD_STATUS': {
+            const { wadPath, status: wadStatus, chunks, error } = action.payload;
+            return {
+                ...state,
+                wadExplorer: {
+                    ...state.wadExplorer,
+                    wads: state.wadExplorer.wads.map(w =>
+                        w.path === wadPath
+                            ? { ...w, status: wadStatus, chunks: chunks ?? w.chunks, error }
+                            : w
+                    ),
+                },
+            };
+        }
+
+        case 'BATCH_SET_WAD_STATUSES': {
+            const updates = new Map(action.payload.map(u => [u.wadPath, u]));
+            return {
+                ...state,
+                wadExplorer: {
+                    ...state.wadExplorer,
+                    wads: state.wadExplorer.wads.map(w => {
+                        const u = updates.get(w.path);
+                        return u ? { ...w, status: u.status, chunks: u.chunks ?? w.chunks, error: u.error } : w;
+                    }),
+                },
+            };
+        }
+
+        case 'SET_WAD_EXPLORER_SELECTED':
+            return {
+                ...state,
+                wadExplorer: { ...state.wadExplorer, selected: action.payload },
+            };
+
+        case 'TOGGLE_WAD_EXPLORER_WAD': {
+            const wadPath = action.payload;
+            const newExpanded = new Set(state.wadExplorer.expandedWads);
+            if (newExpanded.has(wadPath)) {
+                newExpanded.delete(wadPath);
+            } else {
+                newExpanded.add(wadPath);
+            }
+            return {
+                ...state,
+                wadExplorer: { ...state.wadExplorer, expandedWads: newExpanded },
+            };
+        }
+
+        case 'TOGGLE_WAD_EXPLORER_FOLDER': {
+            const key = action.payload;
+            const newExpanded = new Set(state.wadExplorer.expandedFolders);
+            if (newExpanded.has(key)) {
+                newExpanded.delete(key);
+            } else {
+                newExpanded.add(key);
+            }
+            return {
+                ...state,
+                wadExplorer: { ...state.wadExplorer, expandedFolders: newExpanded },
+            };
+        }
+
+        case 'SET_WAD_EXPLORER_SEARCH':
+            return {
+                ...state,
+                wadExplorer: { ...state.wadExplorer, searchQuery: action.payload },
+            };
+
+        // =====================================================================
+        // Extract Session Actions
+        // =====================================================================
+
+        case 'OPEN_EXTRACT_SESSION': {
+            const { id, wadPath } = action.payload;
+            const wadName = wadPath.split(/[\\/]/).pop() || wadPath;
+            const newSession: ExtractSession = {
+                id,
+                wadPath,
+                wadName,
+                chunks: [],
+                selectedHashes: new Set(),
+                previewHash: null,
+                expandedFolders: new Set(),
+                searchQuery: '',
+                loading: true,
+            };
+            return {
+                ...state,
+                extractSessions: [...state.extractSessions, newSession],
+                activeExtractId: id,
+                activeTabId: null,
+                currentView: 'extract',
+            };
+        }
+
+        case 'CLOSE_EXTRACT_SESSION': {
+            const sessionId = action.payload;
+            const newSessions = state.extractSessions.filter(s => s.id !== sessionId);
+            let newActiveExtractId = state.activeExtractId;
+            let newActiveTabId = state.activeTabId;
+            let newView = state.currentView;
+
+            if (state.activeExtractId === sessionId) {
+                // Switch to last remaining extract session, or last project tab, or welcome
+                if (newSessions.length > 0) {
+                    newActiveExtractId = newSessions[newSessions.length - 1].id;
+                    newView = 'extract';
+                } else if (state.openTabs.length > 0) {
+                    newActiveExtractId = null;
+                    newActiveTabId = state.openTabs[state.openTabs.length - 1].id;
+                    newView = 'preview';
+                } else {
+                    newActiveExtractId = null;
+                    newView = 'welcome';
+                }
+            }
+
+            return {
+                ...state,
+                extractSessions: newSessions,
+                activeExtractId: newActiveExtractId,
+                activeTabId: newActiveTabId,
+                currentView: newView,
+            };
+        }
+
+        case 'SWITCH_EXTRACT_TAB': {
+            const sessionId = action.payload;
+            if (!state.extractSessions.find(s => s.id === sessionId)) return state;
+            return {
+                ...state,
+                activeExtractId: sessionId,
+                activeTabId: null,
+                currentView: 'extract',
+            };
+        }
+
+        case 'SET_EXTRACT_CHUNKS': {
+            const { sessionId, chunks } = action.payload;
+            return {
+                ...state,
+                extractSessions: state.extractSessions.map(s =>
+                    s.id === sessionId ? { ...s, chunks, loading: false } : s
+                ),
+            };
+        }
+
+        case 'SET_EXTRACT_PREVIEW': {
+            const { sessionId, hash } = action.payload;
+            return {
+                ...state,
+                extractSessions: state.extractSessions.map(s =>
+                    s.id === sessionId ? { ...s, previewHash: hash } : s
+                ),
+            };
+        }
+
+        case 'TOGGLE_EXTRACT_FOLDER': {
+            const { sessionId, folderPath } = action.payload;
+            return {
+                ...state,
+                extractSessions: state.extractSessions.map(s => {
+                    if (s.id !== sessionId) return s;
+                    const newExpanded = new Set(s.expandedFolders);
+                    if (newExpanded.has(folderPath)) {
+                        newExpanded.delete(folderPath);
+                    } else {
+                        newExpanded.add(folderPath);
+                    }
+                    return { ...s, expandedFolders: newExpanded };
+                }),
+            };
+        }
+
+        case 'TOGGLE_EXTRACT_CHUNK': {
+            const { sessionId, hash } = action.payload;
+            return {
+                ...state,
+                extractSessions: state.extractSessions.map(s => {
+                    if (s.id !== sessionId) return s;
+                    const newSelected = new Set(s.selectedHashes);
+                    if (newSelected.has(hash)) {
+                        newSelected.delete(hash);
+                    } else {
+                        newSelected.add(hash);
+                    }
+                    return { ...s, selectedHashes: newSelected };
+                }),
+            };
+        }
+
+        case 'SET_EXTRACT_SEARCH': {
+            const { sessionId, query } = action.payload;
+            return {
+                ...state,
+                extractSessions: state.extractSessions.map(s =>
+                    s.id === sessionId ? { ...s, searchQuery: query } : s
+                ),
+            };
+        }
+
+        case 'SET_EXTRACT_LOADING': {
+            const { sessionId, loading } = action.payload;
+            return {
+                ...state,
+                extractSessions: state.extractSessions.map(s =>
+                    s.id === sessionId ? { ...s, loading } : s
+                ),
+            };
+        }
 
         default:
             return state;
@@ -495,7 +789,7 @@ export function AppProvider({ children }: AppProviderProps) {
         dispatch({ type: 'CLOSE_CONTEXT_MENU' });
     }, []);
 
-    const value: AppContextValue = {
+    const value = useMemo<AppContextValue>(() => ({
         state,
         dispatch,
         setStatus,
@@ -511,7 +805,7 @@ export function AppProvider({ children }: AppProviderProps) {
         toggleLogPanel,
         openContextMenu,
         closeContextMenu,
-    };
+    }), [state, dispatch, setStatus, setWorking, setReady, setError, openModal, closeModal, showToast, dismissToast, addLog, clearLogs, toggleLogPanel, openContextMenu, closeContextMenu]);
 
     return React.createElement(AppContext.Provider, { value }, children);
 }
@@ -541,7 +835,6 @@ export function getCachedImage(path: string): unknown | null {
         // Move to end (most recently used)
         imageCache.delete(path);
         imageCache.set(path, cached);
-        console.log('[Flint] Image cache hit:', path);
         return cached;
     }
     return null;
@@ -553,14 +846,11 @@ export function cacheImage(path: string, imageData: unknown): void {
         const oldestKey = imageCache.keys().next().value;
         if (oldestKey) {
             imageCache.delete(oldestKey);
-            console.log('[Flint] Image cache evicted:', oldestKey);
         }
     }
     imageCache.set(path, imageData);
-    console.log('[Flint] Image cached:', path, `(${imageCache.size}/${IMAGE_CACHE_MAX_SIZE})`);
 }
 
 export function clearImageCache(): void {
     imageCache.clear();
-    console.log('[Flint] Image cache cleared');
 }

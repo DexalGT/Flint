@@ -1,8 +1,10 @@
 use crate::core::wad::extractor::{extract_all, extract_chunk};
 use crate::core::wad::reader::WadReader;
 use crate::state::HashtableState;
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use tauri::State;
+use walkdir::WalkDir;
 
 /// Information about a WAD archive
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -14,10 +16,9 @@ pub struct WadInfo {
 /// Information about a chunk within a WAD archive
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChunkInfo {
-    pub path_hash: String,
-    pub resolved_path: Option<String>,
-    pub compressed_size: u32,
-    pub uncompressed_size: u32,
+    pub hash: String,
+    pub path: Option<String>,
+    pub size: u32,
 }
 
 /// Result of a WAD extraction operation
@@ -85,18 +86,78 @@ pub async fn get_wad_chunks(
         };
         
         chunk_infos.push(ChunkInfo {
-            path_hash: format!("{:016x}", path_hash),
-            resolved_path,
-            compressed_size: chunk.compressed_size() as u32,
-            uncompressed_size: chunk.uncompressed_size() as u32,
+            hash: format!("{:016x}", path_hash),
+            path: resolved_path,
+            size: chunk.uncompressed_size() as u32,
         });
     }
     
     Ok(chunk_infos)
 }
 
+/// Result of loading one WAD in a batch operation
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WadChunkBatch {
+    /// Absolute path to the WAD file (matches the input path)
+    pub path: String,
+    /// Chunk metadata list (empty on error)
+    pub chunks: Vec<ChunkInfo>,
+    /// Set if this WAD failed to load
+    pub error: Option<String>,
+}
+
+/// Loads chunk metadata for multiple WAD files in one call using parallel I/O.
+///
+/// This is much faster than calling `get_wad_chunks` once per WAD because:
+/// - A single IPC round-trip instead of N
+/// - WADs are read in parallel via rayon
+/// - One combined JSON serialization
+#[tauri::command]
+pub async fn load_all_wad_chunks(
+    paths: Vec<String>,
+    state: State<'_, HashtableState>,
+) -> Result<Vec<WadChunkBatch>, String> {
+    // Clone the Arc so we can move it into the rayon closure
+    let hashtable = state.get_hashtable();
+
+    let batches: Vec<WadChunkBatch> = paths
+        .par_iter()
+        .map(|wad_path| {
+            let result: Result<Vec<ChunkInfo>, String> = (|| {
+                let reader = WadReader::open(wad_path).map_err(|e| e.to_string())?;
+                let chunks = reader.chunks();
+                let mut chunk_infos = Vec::with_capacity(chunks.len());
+                for (path_hash, chunk) in chunks.iter() {
+                    let resolved = hashtable.as_ref().map(|ht| {
+                        let r = ht.resolve(*path_hash);
+                        // Hex-only 16-char strings are unknown hashes — treat as None
+                        if r.len() == 16 && r.bytes().all(|b| b.is_ascii_hexdigit()) {
+                            None
+                        } else {
+                            Some(r.to_string())
+                        }
+                    }).flatten();
+                    chunk_infos.push(ChunkInfo {
+                        hash: format!("{:016x}", path_hash),
+                        path: resolved,
+                        size: chunk.uncompressed_size() as u32,
+                    });
+                }
+                Ok(chunk_infos)
+            })();
+
+            match result {
+                Ok(chunks) => WadChunkBatch { path: wad_path.clone(), chunks, error: None },
+                Err(e) => WadChunkBatch { path: wad_path.clone(), chunks: vec![], error: Some(e) },
+            }
+        })
+        .collect();
+
+    Ok(batches)
+}
+
 /// Extracts chunks from a WAD archive to the specified output directory
-/// 
+///
 /// # Arguments
 /// * `wad_path` - Path to the WAD file
 /// * `output_dir` - Directory where chunks should be extracted
@@ -172,4 +233,97 @@ pub async fn extract_wad(
         extracted_count,
         failed_count,
     })
+}
+
+/// Info about a WAD file found on disk (for game WAD scanning)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GameWadInfo {
+    pub path: String,
+    pub name: String,
+    /// Parent directory name used as a display category (e.g. "Champions", "Maps")
+    pub category: String,
+}
+
+/// Read decompressed chunk data from a WAD archive into memory — no disk write.
+///
+/// # Arguments
+/// * `wad_path` - Path to the WAD file
+/// * `hash`     - Chunk path-hash as a 16-char lowercase hex string
+///
+/// # Returns
+/// * `Ok(Vec<u8>)` - Decompressed chunk bytes
+/// * `Err(String)` - Error message
+#[tauri::command]
+pub async fn read_wad_chunk_data(
+    wad_path: String,
+    hash: String,
+) -> Result<Vec<u8>, String> {
+    let path_hash = u64::from_str_radix(&hash, 16)
+        .map_err(|e| format!("Invalid hash '{}': {}", hash, e))?;
+
+    let mut reader = WadReader::open(&wad_path)?;
+
+    // Clone the chunk to release the immutable borrow before decoding
+    let chunk = reader
+        .get_chunk(path_hash)
+        .ok_or_else(|| format!("Chunk {:016x} not found in WAD", path_hash))?
+        .clone();
+
+    let (mut decoder, _) = reader.wad_mut().decode();
+    decoder
+        .load_chunk_decompressed(&chunk)
+        .map(|b| b.into())
+        .map_err(|e| format!("Failed to decompress chunk {:016x}: {}", path_hash, e))
+}
+
+/// Scan a game installation directory for all WAD archive files.
+///
+/// Searches `{game_path}/DATA/FINAL/` recursively for `*.wad.client` and `*.wad`
+/// files, grouping them by their parent directory name.
+///
+/// # Arguments
+/// * `game_path` - Path to the League `Game/` directory
+///
+/// # Returns
+/// * `Ok(Vec<GameWadInfo>)` - Discovered WAD files sorted by category then name
+/// * `Err(String)`          - Error if the WAD root does not exist
+#[tauri::command]
+pub async fn scan_game_wads(game_path: String) -> Result<Vec<GameWadInfo>, String> {
+    let root = std::path::Path::new(&game_path).join("DATA").join("FINAL");
+
+    if !root.exists() {
+        return Err(format!(
+            "WAD directory not found: {} — make sure this is the League Game/ folder",
+            root.display()
+        ));
+    }
+
+    let mut wads: Vec<GameWadInfo> = WalkDir::new(&root)
+        .max_depth(5)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().is_file())
+        .filter_map(|e| {
+            let path = e.path();
+            let name = path.file_name()?.to_str()?;
+            if !name.ends_with(".wad.client") && !name.ends_with(".wad") {
+                return None;
+            }
+            let category = path
+                .parent()
+                .and_then(|p| p.file_name())
+                .and_then(|n| n.to_str())
+                .unwrap_or("Other")
+                .to_string();
+            Some(GameWadInfo {
+                path: path.to_string_lossy().to_string(),
+                name: name.to_string(),
+                category,
+            })
+        })
+        .collect();
+
+    wads.sort_unstable_by(|a, b| a.category.cmp(&b.category).then(a.name.cmp(&b.name)));
+
+    Ok(wads)
 }

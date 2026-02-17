@@ -7,6 +7,7 @@ import { useAppState } from '../lib/state';
 import { WelcomeScreen } from './WelcomeScreen';
 import { PreviewPanel } from './PreviewPanel';
 import { CheckpointTimeline } from './CheckpointTimeline';
+import { WadPreviewPanel } from './WadPreviewPanel';
 import { getIcon, icons } from '../lib/fileIcons';
 
 interface QuickActionCardProps {
@@ -87,6 +88,8 @@ export const CenterPanel: React.FC = () => {
                 return <ProjectView />;
             case 'checkpoints':
                 return <CheckpointTimeline />;
+            case 'extract':
+                return <WadPreviewPanel />;
             default:
                 return <WelcomeScreen />;
         }

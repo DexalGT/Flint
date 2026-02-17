@@ -290,6 +290,50 @@ fn parse_texture_dimensions(data: &[u8]) -> Result<(u32, u32), String> {
     Ok((texture.width(), texture.height()))
 }
 
+/// Shared decode logic: take raw DDS/TEX bytes and produce a base64-encoded PNG.
+fn decode_texture_bytes_impl(data: &[u8]) -> Result<DecodedImage, String> {
+    if data.len() < 4 {
+        return Err("Data too small to be a valid texture".to_string());
+    }
+
+    let mut cursor = Cursor::new(data);
+    let texture = Texture::from_reader(&mut cursor)
+        .map_err(|e| format!("Failed to parse texture: {:?}", e))?;
+
+    let width = texture.width();
+    let height = texture.height();
+
+    let surface = texture
+        .decode_mipmap(0)
+        .map_err(|e| format!("Failed to decode texture: {:?}", e))?;
+
+    let rgba_image = surface
+        .into_rgba_image()
+        .map_err(|e| format!("Failed to convert to RGBA: {:?}", e))?;
+
+    let format = match &data[0..4] {
+        [0x54, 0x45, 0x58, 0x00] => "TEX",
+        [0x44, 0x44, 0x53, 0x20] => "DDS",
+        _ => "Unknown",
+    };
+
+    let mut png_data = Vec::new();
+    {
+        use image::ImageEncoder;
+        let encoder = image::codecs::png::PngEncoder::new(&mut png_data);
+        encoder
+            .write_image(rgba_image.as_raw(), width, height, image::ExtendedColorType::Rgba8)
+            .map_err(|e| format!("Failed to encode PNG: {}", e))?;
+    }
+
+    Ok(DecodedImage {
+        data: STANDARD.encode(&png_data),
+        width,
+        height,
+        format: format.to_string(),
+    })
+}
+
 /// Decode a DDS or TEX texture file to base64-encoded PNG
 ///
 /// # Arguments
@@ -300,62 +344,23 @@ fn parse_texture_dimensions(data: &[u8]) -> Result<(u32, u32), String> {
 /// * `Err(String)` - Error message
 #[tauri::command]
 pub async fn decode_dds_to_png(path: String) -> Result<DecodedImage, String> {
-    use ltk_texture::Texture;
-    use std::io::Cursor;
+    let data = fs::read(&path).map_err(|e| format!("Failed to read texture file: {}", e))?;
+    decode_texture_bytes_impl(&data)
+}
 
-    let path_buf = std::path::PathBuf::from(&path);
-
-    // Read the texture file
-    let data = fs::read(&path_buf).map_err(|e| format!("Failed to read texture file: {}", e))?;
-
-    if data.len() < 4 {
-        return Err("File too small to be a valid texture".to_string());
-    }
-
-    // Use ltk_texture to read the texture (automatically handles DDS and TEX)
-    let mut cursor = Cursor::new(&data);
-    let texture = Texture::from_reader(&mut cursor)
-        .map_err(|e| format!("Failed to parse texture: {:?}", e))?;
-
-    let width = texture.width();
-    let height = texture.height();
-
-    // Decode the mipmap level 0 (full resolution)
-    let surface = texture
-        .decode_mipmap(0)
-        .map_err(|e| format!("Failed to decode texture: {:?}", e))?;
-
-    // Convert to RGBA image
-    let rgba_image = surface
-        .into_rgba_image()
-        .map_err(|e| format!("Failed to convert to RGBA: {:?}", e))?;
-
-    // Determine format based on magic bytes
-    let format = match &data[0..4] {
-        [0x54, 0x45, 0x58, 0x00] => "TEX",
-        [0x44, 0x44, 0x53, 0x20] => "DDS",
-        _ => "Unknown",
-    };
-
-    // Encode as PNG
-    let mut png_data = Vec::new();
-    {
-        use image::ImageEncoder;
-        let encoder = image::codecs::png::PngEncoder::new(&mut png_data);
-        encoder
-            .write_image(rgba_image.as_raw(), width, height, image::ExtendedColorType::Rgba8)
-            .map_err(|e| format!("Failed to encode PNG: {}", e))?;
-    }
-
-    // Base64 encode
-    let base64_data = STANDARD.encode(&png_data);
-
-    Ok(DecodedImage {
-        data: base64_data,
-        width,
-        height,
-        format: format.to_string(),
-    })
+/// Decode raw DDS/TEX bytes (already in memory) to base64-encoded PNG.
+///
+/// Used by the WAD browser for in-memory preview — no intermediate disk file needed.
+///
+/// # Arguments
+/// * `data` - Raw decompressed DDS or TEX bytes
+///
+/// # Returns
+/// * `Ok(DecodedImage)` - Base64 PNG data with width/height
+/// * `Err(String)` - Error message
+#[tauri::command]
+pub async fn decode_bytes_to_png(data: Vec<u8>) -> Result<DecodedImage, String> {
+    decode_texture_bytes_impl(&data)
 }
 
 

@@ -8,7 +8,7 @@
 
 export type AppStatus = 'ready' | 'working' | 'error';
 export type ModalType = 'newProject' | 'settings' | 'export' | 'firstTimeSetup' | 'updateAvailable' | 'recolor' | 'checkpoint' | null;
-export type ViewType = 'welcome' | 'preview' | 'editor' | 'project' | 'checkpoints';
+export type ViewType = 'welcome' | 'preview' | 'editor' | 'project' | 'checkpoints' | 'extract' | 'wad-explorer';
 
 export interface Toast {
     id: number;
@@ -90,6 +90,63 @@ export interface ProjectTab {
     expandedFolders: Set<string>;
 }
 
+export interface WadChunk {
+    hash: string;        // hex string e.g. "0x1a2b3c4d5e6f7a8b"
+    path: string | null; // resolved path, null if hash is unknown
+    size: number;
+}
+
+export interface ExtractSession {
+    id: string;
+    wadPath: string;
+    wadName: string;              // basename of WAD for display in TabBar
+    chunks: WadChunk[];
+    selectedHashes: Set<string>;  // hashes checked for bulk extract
+    previewHash: string | null;   // hash of the file currently being previewed
+    expandedFolders: Set<string>;
+    searchQuery: string;
+    loading: boolean;
+}
+
+/** A WAD file discovered while scanning a game installation */
+export interface GameWadInfo {
+    /** Absolute path to the .wad.client file */
+    path: string;
+    /** Filename e.g. "Aatrox.wad.client" */
+    name: string;
+    /** Parent directory used as display group e.g. "Champions" */
+    category: string;
+}
+
+// =============================================================================
+// WAD Explorer (VFS) Types
+// =============================================================================
+
+/** A WAD file entry in the unified VFS — chunks are loaded lazily on expand */
+export interface WadExplorerWad {
+    path: string;
+    name: string;
+    category: string;
+    /** 'idle' = not yet fetched | 'loading' = fetch in progress | 'loaded' | 'error' */
+    status: 'idle' | 'loading' | 'loaded' | 'error';
+    chunks: WadChunk[];
+    error?: string;
+}
+
+export interface WadExplorerState {
+    isOpen: boolean;
+    wads: WadExplorerWad[];
+    scanStatus: 'idle' | 'scanning' | 'ready' | 'error';
+    scanError: string | null;
+    /** The currently-previewed chunk */
+    selected: { wadPath: string; hash: string } | null;
+    /** Set of wad paths that are expanded in the tree */
+    expandedWads: Set<string>;
+    /** Set of `${wadPath}::${folderPath}` keys for expanded sub-folders */
+    expandedFolders: Set<string>;
+    searchQuery: string;
+}
+
 export interface AppState {
     // App status
     status: AppStatus;
@@ -109,6 +166,13 @@ export interface AppState {
     openTabs: ProjectTab[];
     activeTabId: string | null;
     recentProjects: RecentProject[];
+
+    // WAD extract sessions
+    extractSessions: ExtractSession[];
+    activeExtractId: string | null;
+
+    // WAD Explorer (unified VFS)
+    wadExplorer: WadExplorerState;
 
     // UI state
     currentView: ViewType;

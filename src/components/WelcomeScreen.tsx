@@ -30,8 +30,13 @@ const FlintLogoLarge: React.FC = () => (
     </svg>
 );
 
+
+// =============================================================================
+// Welcome Screen
+// =============================================================================
+
 export const WelcomeScreen: React.FC = () => {
-    const { state, dispatch, openModal, setWorking, setReady, setError } = useAppState();
+    const { state, dispatch, openModal, setWorking, setReady, setError, showToast } = useAppState();
 
     const openRecentProject = async (projectPath: string) => {
         try {
@@ -95,6 +100,42 @@ export const WelcomeScreen: React.FC = () => {
         }
     };
 
+    /** Open a single WAD file chosen by the user */
+    const handleOpenWad = async () => {
+        try {
+            const selected = await open({
+                title: 'Open WAD File',
+                filters: [{ name: 'WAD Archive', extensions: ['wad', 'client'] }],
+                multiple: false,
+            });
+            if (!selected) return;
+            await openWadPath(selected as string);
+        } catch (error) {
+            console.error('Failed to open WAD:', error);
+        }
+    };
+
+    /** Open a single WAD at a known absolute path (shared by single-file and game-picker flows) */
+    const openWadPath = async (wadPath: string) => {
+        const sessionId = `extract-${Date.now()}`;
+        dispatch({ type: 'OPEN_EXTRACT_SESSION', payload: { id: sessionId, wadPath } });
+        try {
+            const chunks = await api.getWadChunks(wadPath);
+            dispatch({ type: 'SET_EXTRACT_CHUNKS', payload: { sessionId, chunks } });
+        } catch (err) {
+            console.error('[WelcomeScreen] Failed to load WAD chunks:', err);
+            showToast('error', 'Failed to read WAD file', {
+                suggestion: 'Make sure the file is a valid League WAD archive.',
+            });
+            dispatch({ type: 'SET_EXTRACT_LOADING', payload: { sessionId, loading: false } });
+        }
+    };
+
+    /** Open the WAD Explorer workspace */
+    const handleOpenWadExplorer = () => {
+        dispatch({ type: 'OPEN_WAD_EXPLORER' });
+    };
+
     return (
         <div className="welcome">
             <FlintLogoLarge />
@@ -109,6 +150,17 @@ export const WelcomeScreen: React.FC = () => {
                 <button className="btn btn--secondary" onClick={handleOpenProject}>
                     <span dangerouslySetInnerHTML={{ __html: getIcon('folderOpen2') }} />
                     <span>Open Existing Project</span>
+                </button>
+                <button className="btn btn--secondary" onClick={handleOpenWad}>
+                    <span dangerouslySetInnerHTML={{ __html: getIcon('package') }} />
+                    <span>Browse WAD File</span>
+                </button>
+                <button className="btn btn--secondary" onClick={handleOpenWadExplorer}>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <rect x="3" y="5" width="18" height="14" rx="2" stroke="currentColor" strokeWidth="2"/>
+                        <path d="M3 9h18M8 5V3m8 2V3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+                    </svg>
+                    <span>WAD Explorer</span>
                 </button>
             </div>
 
