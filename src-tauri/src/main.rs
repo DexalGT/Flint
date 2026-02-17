@@ -27,6 +27,7 @@ fn main() {
     tracing::info!("Starting Flint");
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(HashtableState::new())
         .setup(|app| {

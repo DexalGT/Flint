@@ -11,10 +11,13 @@
     "icon": [
       "icons/icon.ico",
       "icons/icon.png"
+    ],
+    "externalBin": [
+      "binaries/ritobin-lsp"
     ]
   },
   "productName": "Flint",
-  "version": "0.1.0",
+  "version": "0.2.1",
   "identifier": "com.flint",
   "plugins": {},
   "app": {
@@ -33,9 +36,10 @@
       "csp": {
         "default-src": "'self'",
         "style-src": "'self' 'unsafe-inline'",
-        "script-src": "'self'",
+        "script-src": "'self' blob:",
         "img-src": "'self' data: https:",
-        "connect-src": "'self' https://raw.communitydragon.org"
+        "connect-src": "'self' https://raw.communitydragon.org",
+        "worker-src": "'self' blob:"
       }
     }
   }

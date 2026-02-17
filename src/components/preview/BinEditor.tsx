@@ -25,6 +25,7 @@ import {
     registerRitobinTheme
 } from '../../lib/ritobinLanguage';
 import { AssetPreviewTooltip } from './AssetPreviewTooltip';
+import { BinLspClient, type LspStatus } from '../../lib/lspClient';
 
 /** Delay in milliseconds before showing the asset preview tooltip */
 const HOVER_DELAY_MS = 3000;
@@ -39,6 +40,41 @@ function isPreviewableAssetPath(value: string): boolean {
     if (!value) return false;
     const ext = value.toLowerCase().split('.').pop() || '';
     return PREVIEWABLE_EXTENSIONS.includes(ext);
+}
+
+// ─── LSP Status Indicator ─────────────────────────────────────────────────────
+
+const LSP_DOT_STYLE: Record<LspStatus, React.CSSProperties> = {
+    off:      { background: 'var(--text-muted, #555)', opacity: 0.5 },
+    starting: { background: '#f0c040' },
+    ready:    { background: '#4caf50' },
+    error:    { background: '#e53935' },
+};
+
+const LSP_DOT_TITLE: Record<LspStatus, string> = {
+    off:      'Ritobin LSP: not available',
+    starting: 'Ritobin LSP: connecting…',
+    ready:    'Ritobin LSP: connected',
+    error:    'Ritobin LSP: error',
+};
+
+function LspStatusDot({ status }: { status: LspStatus }) {
+    return (
+        <span
+            title={LSP_DOT_TITLE[status]}
+            style={{
+                display: 'inline-block',
+                width: 8,
+                height: 8,
+                borderRadius: '50%',
+                alignSelf: 'center',
+                marginRight: 6,
+                flexShrink: 0,
+                transition: 'background 0.3s',
+                ...LSP_DOT_STYLE[status],
+            }}
+        />
+    );
 }
 
 /**
@@ -77,6 +113,11 @@ export const BinEditor: React.FC<BinEditorProps> = ({ filePath }) => {
 
     // Reference to the Monaco editor instance
     const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
+    const monacoRef = useRef<Monaco | null>(null);
+
+    // LSP client
+    const lspRef = useRef<BinLspClient | null>(null);
+    const [lspStatus, setLspStatus] = useState<LspStatus>('off');
 
     // Asset preview tooltip state
     const [previewAsset, setPreviewAsset] = useState<string | null>(null);
@@ -105,8 +146,9 @@ export const BinEditor: React.FC<BinEditorProps> = ({ filePath }) => {
      * Store editor reference when mounted for potential future use
      * (e.g., programmatic cursor positioning, formatting, etc.)
      */
-    const handleEditorDidMount: OnMount = (editor, _monaco) => {
+    const handleEditorDidMount: OnMount = (editor, monaco) => {
         editorRef.current = editor;
+        monacoRef.current = monaco;
 
         // Update line count when content changes
         const model = editor.getModel();
@@ -116,6 +158,11 @@ export const BinEditor: React.FC<BinEditorProps> = ({ filePath }) => {
                 setLineCount(model.getLineCount());
             });
         }
+
+        // Start LSP client
+        const lsp = new BinLspClient(setLspStatus);
+        lspRef.current = lsp;
+        lsp.start(monaco, editor);
     };
 
     /**
@@ -174,6 +221,17 @@ export const BinEditor: React.FC<BinEditorProps> = ({ filePath }) => {
             if (hoverTimerRef.current) {
                 clearTimeout(hoverTimerRef.current);
             }
+        };
+    }, []);
+
+    /**
+     * Dispose LSP client on unmount
+     */
+    useEffect(() => {
+        return () => {
+            const model = editorRef.current?.getModel() ?? undefined;
+            lspRef.current?.dispose(editorRef.current ?? undefined, model);
+            lspRef.current = null;
         };
     }, []);
 
@@ -299,6 +357,7 @@ export const BinEditor: React.FC<BinEditorProps> = ({ filePath }) => {
                     </span>
                 </span>
                 <div className="bin-editor__toolbar-actions">
+                    <LspStatusDot status={lspStatus} />
                     <button
                         className="btn btn--primary btn--sm"
                         onClick={handleSave}
