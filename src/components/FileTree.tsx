@@ -107,7 +107,7 @@ interface TreeNodeProps {
     onItemClick: (path: string, isFolder: boolean) => void;
 }
 
-const TreeNode: React.FC<TreeNodeProps> = ({
+const TreeNode: React.FC<TreeNodeProps> = React.memo(({
     node,
     depth,
     selectedFile,
@@ -179,7 +179,7 @@ const TreeNode: React.FC<TreeNodeProps> = ({
             )}
         </div>
     );
-};
+});
 
 const ProjectsPanel: React.FC = () => {
     const { state, dispatch, openModal, setWorking, setReady, setError } = useAppState();

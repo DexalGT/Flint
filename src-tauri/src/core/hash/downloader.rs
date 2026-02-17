@@ -259,12 +259,12 @@ async fn merge_split_files(output_dir: &Path) -> Result<()> {
     }
     
     // Read both files
-    let content0 = fs::read_to_string(&file0_path).await?;
+    let mut merged_content = fs::read_to_string(&file0_path).await?;
     let content1 = fs::read_to_string(&file1_path).await?;
-    
-    // Merge content
-    let merged_content = format!("{}{}", content0, content1);
-    
+
+    // Append in-place to avoid a third allocation from format!
+    merged_content.push_str(&content1);
+
     // Write merged file
     fs::write(&merged_path, merged_content).await?;
     

@@ -71,17 +71,13 @@ struct MessageVisitor<'a>(&'a mut String);
 
 impl<'a> tracing::field::Visit for MessageVisitor<'a> {
     fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
-        if field.name() == "message" {
-            *self.0 = format!("{:?}", value);
-            // Remove surrounding quotes if present
-            if self.0.starts_with('"') && self.0.ends_with('"') {
-                *self.0 = self.0[1..self.0.len()-1].to_string();
-            }
-        } else if self.0.is_empty() {
-            // Use first field as message if no explicit message
-            *self.0 = format!("{:?}", value);
-            if self.0.starts_with('"') && self.0.ends_with('"') {
-                *self.0 = self.0[1..self.0.len()-1].to_string();
+        if field.name() == "message" || self.0.is_empty() {
+            let formatted = format!("{:?}", value);
+            // Strip surrounding quotes in-place to avoid a second allocation
+            if formatted.starts_with('"') && formatted.ends_with('"') && formatted.len() >= 2 {
+                *self.0 = formatted[1..formatted.len() - 1].to_string();
+            } else {
+                *self.0 = formatted;
             }
         }
     }

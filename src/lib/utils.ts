@@ -115,6 +115,54 @@ export function sleep(ms: number): Promise<void> {
 // File Icons
 // =============================================================================
 
+// Hoisted to module level — allocated once, never recreated per call
+const FILE_ICON_MAP: Record<string, string> = {
+    // Documents
+    'md': '📄',
+    'txt': '📄',
+    'pdf': '📕',
+
+    // Code files
+    'js': '📜',
+    'jsx': '⚛',
+    'ts': '📘',
+    'tsx': '⚛',
+    'json': '{}',
+    'html': '🌐',
+    'css': '🎨',
+    'scss': '🎨',
+
+    // Images
+    'png': '🖼',
+    'jpg': '🖼',
+    'jpeg': '🖼',
+    'gif': '🖼',
+    'svg': '🎨',
+    'dds': '🖼',
+    'tga': '🖼',
+    'tex': '🖼',
+
+    // League of Legends specific
+    'bin': '⚙',
+    'skn': '👤',
+    'skl': '🦴',
+    'anm': '🎬',
+    'scb': '🎮',
+    'sco': '🎮',
+    'wad': '📦',
+
+    // Config
+    'ini': '⚙',
+    'cfg': '⚙',
+    'config': '⚙',
+    'gitignore': '🚫',
+
+    // Other
+    'zip': '📦',
+    'rar': '📦',
+    '7z': '📦',
+};
+
 /**
  * Get file icon based on extension
  */
@@ -124,55 +172,7 @@ export function getFileIcon(name: string, isFolder: boolean, isExpanded = false)
     }
 
     const ext = name.split('.').pop()?.toLowerCase();
-
-    const iconMap: Record<string, string> = {
-        // Documents
-        'md': '📄',
-        'txt': '📄',
-        'pdf': '📕',
-
-        // Code files
-        'js': '📜',
-        'jsx': '⚛',
-        'ts': '📘',
-        'tsx': '⚛',
-        'json': '{}',
-        'html': '🌐',
-        'css': '🎨',
-        'scss': '🎨',
-
-        // Images
-        'png': '🖼',
-        'jpg': '🖼',
-        'jpeg': '🖼',
-        'gif': '🖼',
-        'svg': '🎨',
-        'dds': '🖼',
-        'tga': '🖼',
-        'tex': '🖼',
-
-        // League of Legends specific
-        'bin': '⚙',
-        'skn': '👤',
-        'skl': '🦴',
-        'anm': '🎬',
-        'scb': '🎮',
-        'sco': '🎮',
-        'wad': '📦',
-
-        // Config
-        'ini': '⚙',
-        'cfg': '⚙',
-        'config': '⚙',
-        'gitignore': '🚫',
-
-        // Other
-        'zip': '📦',
-        'rar': '📦',
-        '7z': '📦',
-    };
-
-    return iconMap[ext || ''] || '📄';
+    return FILE_ICON_MAP[ext || ''] || '📄';
 }
 
 // =============================================================================

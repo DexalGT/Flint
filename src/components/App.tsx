@@ -9,6 +9,8 @@ import * as api from '../lib/api';
 
 import { TopBar } from './TopBar';
 import { LeftPanel } from './FileTree';
+import { WadBrowserPanel } from './WadBrowser';
+import { WadExplorer } from './WadExplorer';
 import { CenterPanel } from './CenterPanel';
 import { StatusBar } from './StatusBar';
 import { ContextMenu } from './ContextMenu';
@@ -32,14 +34,18 @@ export const App: React.FC = () => {
     const resizerRef = useRef<HTMLDivElement>(null);
     const isResizingRef = useRef(false);
 
+    // Keep a ref to always-current state so shortcut handlers are never stale
+    const stateRef = useRef(state);
+    useEffect(() => { stateRef.current = state; });
+
     // Initialize shortcuts and load data on mount
     useEffect(() => {
         initShortcuts();
 
-        // Register shortcuts
+        // Register shortcuts — use stateRef.current so handlers always see latest state
         registerShortcut('ctrl+n', () => openModal('newProject'));
         registerShortcut('ctrl+s', async () => {
-            const activeTab = getActiveTab(state);
+            const activeTab = getActiveTab(stateRef.current);
             if (activeTab) {
                 try {
                     setWorking('Saving...');
@@ -53,19 +59,23 @@ export const App: React.FC = () => {
         });
         registerShortcut('ctrl+,', () => openModal('settings'));
         registerShortcut('ctrl+e', () => {
-            const activeTab = getActiveTab(state);
+            const activeTab = getActiveTab(stateRef.current);
             if (activeTab) {
                 openModal('export');
             }
         });
         registerShortcut('ctrl+w', () => {
-            // Close current tab
-            if (state.activeTabId) {
-                dispatch({ type: 'REMOVE_TAB', payload: state.activeTabId });
+            const s = stateRef.current;
+            if (s.currentView === 'wad-explorer') {
+                dispatch({ type: 'CLOSE_WAD_EXPLORER' });
+            } else if (s.activeExtractId) {
+                dispatch({ type: 'CLOSE_EXTRACT_SESSION', payload: s.activeExtractId });
+            } else if (s.activeTabId) {
+                dispatch({ type: 'REMOVE_TAB', payload: s.activeTabId });
             }
         });
         registerShortcut('escape', () => {
-            if (state.activeModal) {
+            if (stateRef.current.activeModal) {
                 closeModal();
             }
         });
@@ -161,21 +171,20 @@ export const App: React.FC = () => {
 
     const cleanStaleProjects = async () => {
         try {
-            const recent = state.recentProjects;
-            const validProjects = [];
+            const recent = stateRef.current.recentProjects;
+            if (recent.length === 0) return;
 
-            for (const project of recent) {
-                try {
-                    await api.listProjectFiles(project.path);
-                    validProjects.push(project);
-                } catch {
-                    console.log('[Flint] Removing stale project:', project.path);
-                }
-            }
+            // Validate all projects in parallel instead of sequentially
+            const results = await Promise.allSettled(
+                recent.map(project => api.listProjectFiles(project.path).then(() => project))
+            );
+
+            const validProjects = results
+                .filter((r): r is PromiseFulfilledResult<typeof recent[number]> => r.status === 'fulfilled')
+                .map(r => r.value);
 
             if (validProjects.length !== recent.length) {
                 dispatch({ type: 'SET_RECENT_PROJECTS', payload: validProjects });
-                console.log(`[Flint] Cleaned ${recent.length - validProjects.length} stale projects`);
             }
         } catch (error) {
             console.error('[Flint] Failed to clean stale projects:', error);
@@ -217,8 +226,10 @@ export const App: React.FC = () => {
         setLeftPanelWidth(prev => (prev === 48 ? 280 : 48));
     }, []);
 
-    // Only show project panels if we have an active tab AND not on welcome screen
-    const hasProject = !!state.activeTabId && state.currentView !== 'welcome';
+    // Show left panel if a project tab OR an extract session is active
+    const isWadExplorer = state.currentView === 'wad-explorer';
+    const hasProject = (!!state.activeTabId || !!state.activeExtractId) && !isWadExplorer && state.currentView !== 'welcome';
+    const isExtractMode = !!state.activeExtractId && !isWadExplorer;
 
     // Check if first-time setup is needed
     useEffect(() => {
@@ -231,19 +242,28 @@ export const App: React.FC = () => {
         <>
             <TopBar />
             <div className="main-content" id="main-content">
-                {hasProject && (
+                {isWadExplorer ? (
+                    <WadExplorer />
+                ) : (
                     <>
-                        <LeftPanel style={{ width: leftPanelWidth }} />
-                        <div
-                            ref={resizerRef}
-                            className="panel-resizer"
-                            id="panel-resizer"
-                            onMouseDown={handleMouseDown}
-                            onDoubleClick={handleResizerDoubleClick}
-                        />
+                        {hasProject && (
+                            <>
+                                {isExtractMode
+                                    ? <WadBrowserPanel style={{ width: leftPanelWidth }} />
+                                    : <LeftPanel style={{ width: leftPanelWidth }} />
+                                }
+                                <div
+                                    ref={resizerRef}
+                                    className="panel-resizer"
+                                    id="panel-resizer"
+                                    onMouseDown={handleMouseDown}
+                                    onDoubleClick={handleResizerDoubleClick}
+                                />
+                            </>
+                        )}
+                        <CenterPanel />
                     </>
                 )}
-                <CenterPanel />
             </div>
             <StatusBar />
 
