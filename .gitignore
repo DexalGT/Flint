@@ -26,6 +26,7 @@ dist-ssr
 # Rust
 /target
 /src-tauri/target
+/src-tauri/binaries
 # Note: Cargo.lock should be committed for application projects (not libraries)
 # Cargo.lock
 .cargo/

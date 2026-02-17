@@ -96,12 +96,11 @@ export class BinLspClient {
         const model = editorInstance.getModel();
         if (!model) { this.setStatus('error'); return; }
 
-        // Spawn the LSP binary from PATH ─────────────────────────────────────
-        // Build ritobin-lsp and add it to PATH: cargo install --path .
-        // (in the ritobin-lsp crate directory)
+        // Spawn the bundled ritobin-lsp sidecar ─────────────────────────────
+        // Built automatically from ../ritobin-lsp source by src-tauri/build.rs
         let child: Child;
         try {
-            const cmd = Command.create('ritobin-lsp');
+            const cmd = Command.sidecar('binaries/ritobin-lsp');
             cmd.stdout.on('data', (chunk: string) => this.onChunk(chunk, monaco));
             cmd.stderr.on('data', (line: string) => console.debug('[ritobin-lsp]', line));
             cmd.on('close', () => {

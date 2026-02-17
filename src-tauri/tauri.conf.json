@@ -11,6 +11,9 @@
     "icon": [
       "icons/icon.ico",
       "icons/icon.png"
+    ],
+    "externalBin": [
+      "binaries/ritobin-lsp"
     ]
   },
   "productName": "Flint",
