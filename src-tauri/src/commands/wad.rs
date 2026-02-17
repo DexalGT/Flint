@@ -128,7 +128,7 @@ pub async fn load_all_wad_chunks(
                 let chunks = reader.chunks();
                 let mut chunk_infos = Vec::with_capacity(chunks.len());
                 for (path_hash, chunk) in chunks.iter() {
-                    let resolved = hashtable.as_ref().map(|ht| {
+                    let resolved = hashtable.as_ref().and_then(|ht| {
                         let r = ht.resolve(*path_hash);
                         // Hex-only 16-char strings are unknown hashes — treat as None
                         if r.len() == 16 && r.bytes().all(|b| b.is_ascii_hexdigit()) {
@@ -136,7 +136,7 @@ pub async fn load_all_wad_chunks(
                         } else {
                             Some(r.to_string())
                         }
-                    }).flatten();
+                    });
                     chunk_infos.push(ChunkInfo {
                         hash: format!("{:016x}", path_hash),
                         path: resolved,
@@ -264,10 +264,9 @@ pub async fn read_wad_chunk_data(
     let mut reader = WadReader::open(&wad_path)?;
 
     // Clone the chunk to release the immutable borrow before decoding
-    let chunk = reader
+    let chunk = *reader
         .get_chunk(path_hash)
-        .ok_or_else(|| format!("Chunk {:016x} not found in WAD", path_hash))?
-        .clone();
+        .ok_or_else(|| format!("Chunk {:016x} not found in WAD", path_hash))?;
 
     let (mut decoder, _) = reader.wad_mut().decode();
     decoder

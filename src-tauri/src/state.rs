@@ -10,6 +10,12 @@ static LAZY_HASHTABLE: OnceLock<Arc<Hashtable>> = OnceLock::new();
 #[derive(Clone)]
 pub struct HashtableState(pub Arc<Mutex<Option<PathBuf>>>);
 
+impl Default for HashtableState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl HashtableState {
     pub fn new() -> Self {
         Self(Arc::new(Mutex::new(None)))
@@ -39,9 +45,8 @@ impl HashtableState {
         Some(Arc::clone(ht))
     }
 
+    #[allow(clippy::len_without_is_empty)]
     pub fn len(&self) -> usize {
         LAZY_HASHTABLE.get().map_or(0, |h| h.len())
     }
-
-    pub fn is_empty(&self) -> bool { self.len() == 0 }
 }

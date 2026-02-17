@@ -11,6 +11,13 @@ If you need to verify Rust syntax, use `cargo check` at most — but prefer just
 - Never add `Co-Authored-By:` lines to commit messages.
 - Commit messages should be short and imperative (e.g. `fix get_wad_chunks arg name`).
 
+## Rust lint check
+To verify Rust code is warning/error-free, run:
+```
+cargo clippy --lib --bins -- -D warnings -A clippy::needless_return
+```
+This is safe to run and does not wipe the incremental cache.
+
 ## TypeScript type-checking
 `npx tsc --noEmit` is fine to run — it does not affect the Rust build cache.
 
