@@ -154,7 +154,6 @@ export const NewProjectModal: React.FC = () => {
 
             const files = await api.listProjectFiles(projectDir);
             dispatch({ type: 'SET_FILE_TREE', payload: files });
-            dispatch({ type: 'SET_STATE', payload: { currentView: 'project' } });
 
             // Add to recent
             const recent = state.recentProjects.filter(p => p.path !== projectDir);

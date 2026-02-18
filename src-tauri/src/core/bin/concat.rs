@@ -157,19 +157,17 @@ pub fn create_concat_bin(
             continue;
         }
 
-        tracing::info!("Processing Type 3 BIN: {} (actual: {})", bin_path, actual_path);
-
         // Load the source BIN using ltk_meta
         let data = fs::read(&full_path).map_err(|e| Error::io_with_path(e, &full_path))?;
-        
+
         let magic = if data.len() >= 4 {
             String::from_utf8_lossy(&data[0..4]).to_string()
         } else {
             "SHORT".to_string()
         };
 
-        tracing::info!(
-            "Processing Type 3 BIN: {} (actual: {}, size: {} bytes, magic: {})", 
+        tracing::debug!(
+            "Processing Type 3 BIN: {} (actual: {}, size: {} bytes, magic: {})",
             bin_path, actual_path, data.len(), magic
         );
 
@@ -203,7 +201,7 @@ pub fn create_concat_bin(
         for (path_hash, object) in source_bin.objects {
             if all_objects.contains_key(&path_hash) {
                 collision_count += 1;
-                tracing::warn!("Hash collision detected for 0x{:08x} in {}, last-write-wins", path_hash, bin_path);
+                tracing::debug!("Hash collision for 0x{:08x} in {}, last-write-wins", path_hash, bin_path);
             }
             all_objects.insert(path_hash, object);
         }
@@ -293,10 +291,7 @@ pub fn update_main_bin_links(main_bin: &mut BinTree, concat_path: String) -> Res
         new_links.push(path);
     }
 
-    tracing::info!("Updated main BIN linked list:");
-    for (i, link) in new_links.iter().enumerate() {
-        tracing::info!("  [{}] {}", i, link);
-    }
+    tracing::debug!("Updated main BIN linked list: {:?}", new_links);
 
     set_linked_paths(main_bin, new_links);
 
@@ -352,14 +347,12 @@ pub fn concatenate_linked_bins(
 
     // 5. Delete the original Type 3 BINs that were concatenated
     let mut deleted_count = 0;
-    tracing::info!("Deleting {} source BINs that were concatenated", result.source_paths.len());
     for source_path in &result.source_paths {
         let full_path = content_base.join(source_path);
-        tracing::debug!("Checking for deletion: {} -> {}", source_path, full_path.display());
         if full_path.exists() {
             match fs::remove_file(&full_path) {
                 Ok(_) => {
-                    tracing::info!("Deleted concatenated source BIN: {}", source_path);
+                    tracing::debug!("Deleted source BIN: {}", source_path);
                     deleted_count += 1;
                 }
                 Err(e) => {
@@ -367,10 +360,10 @@ pub fn concatenate_linked_bins(
                 }
             }
         } else {
-            tracing::warn!("Source BIN not found for deletion: {} (full path: {})", source_path, full_path.display());
+            tracing::debug!("Source BIN already gone: {}", source_path);
         }
     }
-    tracing::info!("Deleted {} original Type 3 BINs after concatenation", deleted_count);
+    tracing::info!("Deleted {} source BINs after concatenation", deleted_count);
 
     Ok(result)
 }
