@@ -1,8 +1,9 @@
 use std::path::PathBuf;
 
 fn main() {
-    tauri_build::build();
+    // Build LSP binary first so it exists when tauri_build validates externalBin
     build_ritobin_lsp();
+    tauri_build::build();
 }
 
 /// Compile ritobin-lsp from the sibling directory and copy the binary into
