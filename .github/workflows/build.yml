@@ -62,8 +62,12 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
+          # PS 7.3+ throws on non-zero native exit codes — disable that for git commands
+          $ErrorActionPreference = 'Continue'
+
           # Collect commits and changed files since the last tag
-          $lastTag = git describe --tags --abbrev=0 2>$null
+          $lastTag = $null
+          try { $lastTag = (git describe --tags --abbrev=0 2>$null).Trim() } catch {}
           if ($lastTag) {
             $commits = git log "$lastTag..HEAD" --pretty=format:"- %s" | Out-String
             $files   = git diff "$lastTag..HEAD" --name-only | Out-String
