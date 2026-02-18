@@ -79,19 +79,9 @@ export const BinEditor: React.FC<BinEditorProps> = ({ filePath }) => {
 
     /**
      * Configure Monaco before the editor is created.
-     * Sets up the worker environment so Monaco workers load correctly inside
-     * Tauri's webview (Vite bundles the worker at build time via new URL()).
+     * @monaco-editor/react handles worker loading internally — no MonacoEnvironment needed.
      */
     const handleEditorWillMount: BeforeMount = (_monaco: Monaco) => {
-        if (!(window as Window & { MonacoEnvironment?: unknown }).MonacoEnvironment) {
-            (window as Window & { MonacoEnvironment?: { getWorker: () => Worker } }).MonacoEnvironment = {
-                getWorker() {
-                    return new Worker(
-                        new URL('monaco-editor/esm/vs/editor/editor.worker', import.meta.url)
-                    );
-                },
-            };
-        }
         registerRitobinLanguage(_monaco);
         registerRitobinTheme(_monaco);
     };
