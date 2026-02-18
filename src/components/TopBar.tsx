@@ -226,19 +226,20 @@ export const TopBar: React.FC = () => {
 
             {/* Actions */}
             <div className="topbar__actions">
-                {currentProjectPath && (
+                {/* Timeline + Export only make sense when a project is actively open */}
+                {state.currentView === 'preview' && currentProjectPath && (
                     <button
-                        className={`btn btn--ghost ${state.currentView === 'checkpoints' ? 'btn--active' : ''}`}
+                        className="btn btn--ghost"
                         title="Project Checkpoints"
-                        onClick={() => dispatch({ type: 'SET_STATE', payload: { currentView: 'checkpoints' } })}
+                        onClick={() => dispatch({ type: 'OPEN_MODAL', payload: { modal: 'checkpoint' } })}
                     >
                         <span dangerouslySetInnerHTML={{ __html: getIcon('history') }} />
                         <span>Timeline</span>
                     </button>
                 )}
 
-                {/* Export dropdown (only visible when project is open) */}
-                {currentProject && (
+                {/* Export dropdown (only visible when actively viewing a project) */}
+                {state.currentView === 'preview' && currentProject && (
                     <div className={`dropdown ${dropdownOpen ? 'dropdown--open' : ''}`}>
                         <button
                             className="btn btn--primary btn--dropdown"
@@ -265,6 +266,15 @@ export const TopBar: React.FC = () => {
                         </div>
                     </div>
                 )}
+
+                {/* Settings — always accessible */}
+                <button
+                    className="btn btn--ghost"
+                    title="Settings (Ctrl+,)"
+                    onClick={() => dispatch({ type: 'OPEN_MODAL', payload: { modal: 'settings' } })}
+                >
+                    <span dangerouslySetInnerHTML={{ __html: getIcon('settings') }} />
+                </button>
             </div>
         </header>
     );

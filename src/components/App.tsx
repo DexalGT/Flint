@@ -229,7 +229,8 @@ export const App: React.FC = () => {
     // Use currentView as the single source of truth for what's displayed
     const isWadExplorer = state.currentView === 'wad-explorer';
     const isExtractMode = state.currentView === 'extract';
-    const hasProject = state.currentView === 'preview' || isExtractMode;
+    // Show a left panel for any view that isn't the welcome screen or WAD Explorer
+    const hasProject = !isWadExplorer && state.currentView !== 'welcome';
 
     // Check if first-time setup is needed
     useEffect(() => {

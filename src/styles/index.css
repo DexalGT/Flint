@@ -605,7 +605,7 @@ textarea:focus {
   border-bottom: 1px solid var(--border);
 }
 
-.search-box__input {
+input.search-box__input {
   width: 100%;
   padding: var(--space-sm) var(--space-md);
   padding-left: 32px;
