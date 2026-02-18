@@ -62,18 +62,23 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          # PS 7.3+ throws on non-zero native exit codes — disable that for git commands
+          # Prevent PS 7.3+ from turning non-zero native exit codes into errors
           $ErrorActionPreference = 'Continue'
+          if ($PSVersionTable.PSVersion.Major -ge 7 -and $PSVersionTable.PSVersion.Minor -ge 3) {
+            $PSNativeCommandUseErrorActionPreference = $false
+          }
 
           # Collect commits and changed files since the last tag
           $lastTag = $null
-          try { $lastTag = (git describe --tags --abbrev=0 2>$null).Trim() } catch {}
+          try { $lastTag = (git describe --tags --abbrev=0 2>$null) } catch {}
+          if ($lastTag) { $lastTag = $lastTag.Trim() }
+
           if ($lastTag) {
-            $commits = git log "$lastTag..HEAD" --pretty=format:"- %s" | Out-String
-            $files   = git diff "$lastTag..HEAD" --name-only | Out-String
+            $commits = (git log "$lastTag..HEAD" --pretty=format:"- %s") -join "`n"
+            $files   = (git diff "$lastTag..HEAD" --name-only 2>$null) -join "`n"
           } else {
-            $commits = git log --pretty=format:"- %s" -30 | Out-String
-            $files   = git diff HEAD~5..HEAD --name-only 2>$null | Out-String
+            $commits = (git log --pretty=format:"- %s" -30) -join "`n"
+            $files   = (git diff HEAD~3..HEAD --name-only 2>$null) -join "`n"
           }
 
           $notes = ""
@@ -126,6 +131,7 @@ jobs:
           "notes<<$delim"  | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           $notes           | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           $delim           | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          exit 0
 
       - name: Create GitHub Release
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
