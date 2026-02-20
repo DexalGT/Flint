@@ -13,6 +13,10 @@
         "dialog:allow-save",
         "dialog:allow-message",
         "dialog:allow-ask",
-        "dialog:allow-confirm"
+        "dialog:allow-confirm",
+        "updater:default",
+        "updater:allow-check",
+        "process:default",
+        "process:allow-relaunch"
     ]
 }
