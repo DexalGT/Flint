@@ -31,11 +31,36 @@ jobs:
       - name: Install Dependencies
         run: npm ci
 
+      - name: Debug - Check Signing Key
+        shell: pwsh
+        run: |
+          if ($env:TAURI_SIGNING_PRIVATE_KEY) {
+            Write-Host "✓ TAURI_SIGNING_PRIVATE_KEY is set (length: $($env:TAURI_SIGNING_PRIVATE_KEY.Length))"
+          } else {
+            Write-Error "✗ TAURI_SIGNING_PRIVATE_KEY is NOT set!"
+          }
+          if ($env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD) {
+            Write-Host "✓ TAURI_SIGNING_PRIVATE_KEY_PASSWORD is set"
+          } else {
+            Write-Host "ℹ TAURI_SIGNING_PRIVATE_KEY_PASSWORD is not set (no password)"
+          }
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
       - name: Build Release
         run: npm run tauri build
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+      - name: Debug - List Build Artifacts
+        shell: pwsh
+        run: |
+          Write-Host "Build artifacts in bundle/nsis:"
+          Get-ChildItem -Path "src-tauri/target/release/bundle/nsis" | ForEach-Object {
+            Write-Host "  - $($_.Name) ($([math]::Round($_.Length / 1MB, 2)) MB)"
+          }
 
       - name: Create latest.json for updater
         shell: pwsh
