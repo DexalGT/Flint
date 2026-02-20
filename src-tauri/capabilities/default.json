@@ -17,6 +17,6 @@
         "updater:default",
         "updater:allow-check",
         "process:default",
-        "process:allow-relaunch"
+        "process:allow-restart"
     ]
 }
