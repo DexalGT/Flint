@@ -27,7 +27,7 @@
       "endpoints": [
         "https://github.com/SirDexal/Flint/releases/latest/download/latest.json"
       ],
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEVCNEM3NTZCRjMwRjNFNEMKUldSTVBnL3phM1ZNNi9vWGxxV3BUUmFDcDYzYUtkVUZ1cmsveGtrWmZSRWFWemlrcFMyUTlxRU8K"
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDJBRDEyQjU1NTFDRjZDNjIKUldSaWJNOVJWU3ZSS2tOSHJmQmVQTGdNUDdYQkdWQTVVbW5raEFWQXM0aExFa3hYRk1HRVk2cTMK"
     }
   },
   "app": {
