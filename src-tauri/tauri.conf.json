@@ -17,7 +17,8 @@
         "installerIcon": "icons/icon.ico",
         "installMode": "currentUser"
       }
-    }
+    },
+    "createUpdaterArtifacts": "v1Compatible"
   },
   "productName": "Flint",
   "version": "1.1.2",
