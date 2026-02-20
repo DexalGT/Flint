@@ -30,3 +30,4 @@ dist-ssr
 # Note: Cargo.lock should be committed for application projects (not libraries)
 # Cargo.lock
 .cargo/
+~

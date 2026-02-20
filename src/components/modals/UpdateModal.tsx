@@ -1,9 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useAppState } from '../../lib/state';
-import * as api from '../../lib/api';
-import type { UpdateInfo, DownloadProgress } from '../../lib/types';
+import * as updater from '../../lib/updater';
+import type { UpdateInfo } from '../../lib/types';
 import { getIcon } from '../../lib/fileIcons';
-import { listen } from '@tauri-apps/api/event';
 
 export const UpdateModal: React.FC = () => {
     const { state, dispatch, closeModal, showToast } = useAppState();
@@ -13,32 +12,21 @@ export const UpdateModal: React.FC = () => {
     const isVisible = state.activeModal === 'updateAvailable';
     const updateInfo = state.modalOptions as UpdateInfo | null;
 
-    // Listen for real download progress events
-    useEffect(() => {
-        let unlisten: (() => void) | null = null;
-        listen<DownloadProgress>('update-download-progress', (event) => {
-            const { downloaded, total } = event.payload;
-            if (total > 0) {
-                setDownloadProgress(Math.round((downloaded / total) * 100));
-            }
-        }).then(fn => { unlisten = fn; });
-
-        return () => { if (unlisten) unlisten(); };
-    }, []);
-
     const handleUpdateNow = async () => {
-        if (!updateInfo?.download_url) {
-            showToast('error', 'No download URL available');
-            return;
-        }
-
         setIsDownloading(true);
         setDownloadProgress(0);
 
         try {
-            showToast('info', 'Downloading update...');
-            await api.downloadAndInstallUpdate(updateInfo.download_url);
-            setDownloadProgress(100);
+            showToast('info', 'Downloading update...', { duration: 0 });
+
+            await updater.downloadAndInstallUpdate((downloaded, total) => {
+                if (total > 0) {
+                    const progress = Math.round((downloaded / total) * 100);
+                    setDownloadProgress(progress);
+                }
+            });
+
+            // The app will relaunch automatically after successful update
         } catch (err) {
             setIsDownloading(false);
             setDownloadProgress(0);
@@ -179,7 +167,7 @@ export const UpdateModal: React.FC = () => {
                     <button
                         className="btn btn--primary"
                         onClick={handleUpdateNow}
-                        disabled={isDownloading || !updateInfo.download_url}
+                        disabled={isDownloading}
                     >
                         {isDownloading ? 'Downloading...' : 'Update Now'}
                     </button>

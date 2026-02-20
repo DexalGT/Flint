@@ -13,6 +13,7 @@ export const SettingsModal: React.FC = () => {
 
     const [leaguePath, setLeaguePath] = useState(state.leaguePath || '');
     const [creatorName, setCreatorName] = useState(state.creatorName || '');
+    const [autoUpdateEnabled, setAutoUpdateEnabled] = useState(state.autoUpdateEnabled);
     const [isValidating, setIsValidating] = useState(false);
 
     const isVisible = state.activeModal === 'settings';
@@ -21,8 +22,9 @@ export const SettingsModal: React.FC = () => {
         if (isVisible) {
             setLeaguePath(state.leaguePath || '');
             setCreatorName(state.creatorName || '');
+            setAutoUpdateEnabled(state.autoUpdateEnabled);
         }
-    }, [isVisible, state.leaguePath, state.creatorName]);
+    }, [isVisible, state.leaguePath, state.creatorName, state.autoUpdateEnabled]);
 
     const handleBrowseLeague = async () => {
         const selected = await open({
@@ -73,6 +75,7 @@ export const SettingsModal: React.FC = () => {
             payload: {
                 leaguePath: leaguePath || null,
                 creatorName: creatorName || null,
+                autoUpdateEnabled,
             },
         });
 
@@ -125,6 +128,21 @@ export const SettingsModal: React.FC = () => {
                             value={creatorName}
                             onChange={(e) => setCreatorName(e.target.value)}
                         />
+                    </div>
+
+                    <div className="form-group">
+                        <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <input
+                                type="checkbox"
+                                checked={autoUpdateEnabled}
+                                onChange={(e) => setAutoUpdateEnabled(e.target.checked)}
+                                style={{ width: 'auto', margin: 0 }}
+                            />
+                            <span>Enable automatic updates</span>
+                        </label>
+                        <p style={{ color: 'var(--text-secondary)', fontSize: '12px', marginTop: '4px' }}>
+                            Automatically check for and notify about new Flint releases
+                        </p>
                     </div>
 
                     <div className="form-group">

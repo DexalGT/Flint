@@ -193,7 +193,8 @@ export interface AppState {
     // Context menu
     contextMenu: ContextMenuState | null;
 
-    // Skipped update version (persisted)
+    // Auto-update settings (persisted)
+    autoUpdateEnabled: boolean;
     skippedUpdateVersion: string | null;
 }
 

@@ -6,6 +6,7 @@ import React, { useEffect, useCallback, useRef, useState } from 'react';
 import { useAppState } from '../lib/state';
 import { initShortcuts, registerShortcut } from '../lib/utils';
 import * as api from '../lib/api';
+import * as updater from '../lib/updater';
 
 import { TopBar } from './TopBar';
 import { LeftPanel } from './FileTree';
@@ -149,16 +150,35 @@ export const App: React.FC = () => {
     };
 
     const checkForUpdates = async () => {
+        // Check if auto-updates are enabled
+        if (!stateRef.current.autoUpdateEnabled) {
+            console.log('[Flint] Auto-updates disabled, skipping update check');
+            return;
+        }
+
         try {
             console.log('[Flint] Checking for updates...');
-            const updateInfo = await api.checkForUpdates();
-            if (updateInfo.available) {
+            const result = await updater.checkForUpdates();
+
+            if (result.available && result.newVersion) {
                 // Skip if user already skipped this version
-                if (state.skippedUpdateVersion === updateInfo.latest_version) {
-                    console.log(`[Flint] Update ${updateInfo.latest_version} was skipped by user`);
+                if (stateRef.current.skippedUpdateVersion === result.newVersion) {
+                    console.log(`[Flint] Update ${result.newVersion} was skipped by user`);
                     return;
                 }
-                console.log(`[Flint] Update available: ${updateInfo.current_version} → ${updateInfo.latest_version}`);
+
+                console.log(`[Flint] Update available: ${result.currentVersion} → ${result.newVersion}`);
+
+                // Convert to the format expected by UpdateModal
+                const updateInfo = {
+                    available: true,
+                    current_version: result.currentVersion,
+                    latest_version: result.newVersion,
+                    release_notes: result.body || 'No release notes available',
+                    published_at: result.date || new Date().toISOString(),
+                    download_url: '', // Not needed with Tauri updater plugin
+                };
+
                 openModal('updateAvailable', updateInfo as unknown as Record<string, unknown>);
             } else {
                 console.log('[Flint] Application is up to date');

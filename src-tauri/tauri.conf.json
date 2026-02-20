@@ -11,12 +11,25 @@
     "icon": [
       "icons/icon.ico",
       "icons/icon.png"
-    ]
+    ],
+    "windows": {
+      "nsis": {
+        "installerIcon": "icons/icon.ico",
+        "installMode": "currentUser"
+      }
+    }
   },
   "productName": "Flint",
   "version": "0.2.1",
-  "identifier": "com.flint",
-  "plugins": {},
+  "identifier": "com.sirdexal.flint",
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/SirDexal/Flint/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEVCNEM3NTZCRjMwRjNFNEMKUldSTVBnL3phM1ZNNi9vWGxxV3BUUmFDcDYzYUtkVUZ1cmsveGtrWmZSRWFWemlrcFMyUTlxRU8K"
+    }
+  },
   "app": {
     "withGlobalTauri": true,
     "windows": [
@@ -35,7 +48,7 @@
         "style-src": "'self' 'unsafe-inline'",
         "script-src": "'self' blob:",
         "img-src": "'self' data: https:",
-        "connect-src": "'self' https://raw.communitydragon.org",
+        "connect-src": "'self' https://raw.communitydragon.org https://github.com",
         "worker-src": "'self' blob:"
       }
     }
