@@ -21,7 +21,7 @@ export async function checkForUpdates(): Promise<UpdateCheckResult> {
     try {
         const update = await check();
 
-        if (update && update.available) {
+        if (update) {
             return {
                 available: true,
                 currentVersion: update.currentVersion,
@@ -33,7 +33,7 @@ export async function checkForUpdates(): Promise<UpdateCheckResult> {
 
         return {
             available: false,
-            currentVersion: update?.currentVersion || '0.0.0',
+            currentVersion: '0.0.0',
         };
     } catch (error) {
         console.error('[Updater] Failed to check for updates:', error);
@@ -50,29 +50,35 @@ export async function downloadAndInstallUpdate(
     try {
         const update = await check();
 
-        if (!update || !update.available) {
+        if (!update) {
             throw new Error('No update available');
         }
 
         console.log('[Updater] Downloading update...');
+
+        // Track download progress
+        let totalBytes = 0;
+        let downloadedBytes = 0;
 
         // Download with progress callback
         await update.downloadAndInstall((event) => {
             switch (event.event) {
                 case 'Started':
                     console.log('[Updater] Download started');
-                    onProgress?.(0, event.data.contentLength || 0);
+                    totalBytes = event.data.contentLength || 0;
+                    downloadedBytes = 0;
+                    onProgress?.(0, totalBytes);
                     break;
                 case 'Progress':
-                    console.log(`[Updater] Downloaded ${event.data.chunkLength} bytes`);
-                    if (onProgress && event.data.chunkLength && event.data.contentLength) {
-                        // Note: This is cumulative progress
-                        onProgress(event.data.chunkLength, event.data.contentLength);
+                    downloadedBytes += event.data.chunkLength;
+                    console.log(`[Updater] Downloaded ${downloadedBytes} / ${totalBytes} bytes`);
+                    if (onProgress && totalBytes > 0) {
+                        onProgress(downloadedBytes, totalBytes);
                     }
                     break;
                 case 'Finished':
                     console.log('[Updater] Download finished');
-                    onProgress?.(100, 100);
+                    onProgress?.(totalBytes, totalBytes);
                     break;
             }
         });
