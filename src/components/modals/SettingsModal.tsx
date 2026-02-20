@@ -5,8 +5,10 @@
 import React, { useState, useEffect } from 'react';
 import { useAppState } from '../../lib/state';
 import * as api from '../../lib/api';
+import * as updater from '../../lib/updater';
 import { open } from '@tauri-apps/plugin-dialog';
 import { getIcon } from '../../lib/fileIcons';
+import { getVersion } from '@tauri-apps/api/app';
 
 export const SettingsModal: React.FC = () => {
     const { state, dispatch, closeModal, showToast } = useAppState();
@@ -16,6 +18,12 @@ export const SettingsModal: React.FC = () => {
     const [autoUpdateEnabled, setAutoUpdateEnabled] = useState(state.autoUpdateEnabled);
     const [isValidating, setIsValidating] = useState(false);
 
+    // Update checker state
+    const [currentVersion, setCurrentVersion] = useState<string>('');
+    const [latestVersion, setLatestVersion] = useState<string | null>(null);
+    const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
+    const [updateAvailable, setUpdateAvailable] = useState(false);
+
     const isVisible = state.activeModal === 'settings';
 
     useEffect(() => {
@@ -23,6 +31,9 @@ export const SettingsModal: React.FC = () => {
             setLeaguePath(state.leaguePath || '');
             setCreatorName(state.creatorName || '');
             setAutoUpdateEnabled(state.autoUpdateEnabled);
+
+            // Load current version
+            getVersion().then(setCurrentVersion).catch(() => setCurrentVersion('0.0.0'));
         }
     }, [isVisible, state.leaguePath, state.creatorName, state.autoUpdateEnabled]);
 
@@ -48,6 +59,49 @@ export const SettingsModal: React.FC = () => {
             showToast('error', 'Could not auto-detect League installation');
         } finally {
             setIsValidating(false);
+        }
+    };
+
+    const handleCheckForUpdates = async () => {
+        setIsCheckingUpdate(true);
+        setLatestVersion(null);
+        setUpdateAvailable(false);
+
+        try {
+            const result = await updater.checkForUpdates();
+
+            if (result.available && result.newVersion) {
+                setLatestVersion(result.newVersion);
+                setUpdateAvailable(true);
+                showToast('success', `Update available: v${result.newVersion}`);
+            } else {
+                setLatestVersion(result.currentVersion);
+                showToast('info', 'You are running the latest version');
+            }
+        } catch (error) {
+            console.error('Update check failed:', error);
+            showToast('error', 'Failed to check for updates');
+        } finally {
+            setIsCheckingUpdate(false);
+        }
+    };
+
+    const handleUpdateNow = () => {
+        if (latestVersion) {
+            // Open the update modal with the available update info
+            dispatch({
+                type: 'OPEN_MODAL',
+                payload: {
+                    modal: 'updateAvailable',
+                    options: {
+                        available: true,
+                        current_version: currentVersion,
+                        latest_version: latestVersion,
+                        release_notes: 'Check GitHub releases for details',
+                        published_at: new Date().toISOString(),
+                    } as Record<string, unknown>,
+                },
+            });
         }
     };
 
@@ -131,18 +185,72 @@ export const SettingsModal: React.FC = () => {
                     </div>
 
                     <div className="form-group">
-                        <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <label className="form-label">Updates</label>
+
+                        {/* Version Info */}
+                        <div style={{
+                            padding: '16px',
+                            background: 'var(--bg-tertiary)',
+                            borderRadius: '8px',
+                            marginBottom: '12px',
+                        }}>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+                                <div>
+                                    <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                                        Current Version
+                                    </div>
+                                    <div style={{ fontSize: '18px', fontWeight: '600' }}>
+                                        v{currentVersion}
+                                    </div>
+                                </div>
+
+                                {latestVersion && updateAvailable && (
+                                    <>
+                                        <span dangerouslySetInnerHTML={{ __html: getIcon('chevronRight') }} style={{ opacity: 0.5 }} />
+                                        <div style={{ textAlign: 'right' }}>
+                                            <div style={{ fontSize: '12px', color: 'var(--accent-primary)', marginBottom: '4px' }}>
+                                                Latest Version
+                                            </div>
+                                            <div style={{ fontSize: '18px', fontWeight: '600', color: 'var(--accent-primary)' }}>
+                                                v{latestVersion}
+                                            </div>
+                                        </div>
+                                    </>
+                                )}
+                            </div>
+
+                            <div style={{ display: 'flex', gap: '8px' }}>
+                                <button
+                                    className="btn btn--secondary"
+                                    onClick={handleCheckForUpdates}
+                                    disabled={isCheckingUpdate}
+                                    style={{ flex: 1 }}
+                                >
+                                    {isCheckingUpdate ? 'Checking...' : 'Check for Updates'}
+                                </button>
+
+                                {updateAvailable && latestVersion && (
+                                    <button
+                                        className="btn btn--primary"
+                                        onClick={handleUpdateNow}
+                                        style={{ flex: 1 }}
+                                    >
+                                        Update Now
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+
+                        {/* Auto-update toggle */}
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
                             <input
                                 type="checkbox"
                                 checked={autoUpdateEnabled}
                                 onChange={(e) => setAutoUpdateEnabled(e.target.checked)}
                                 style={{ width: 'auto', margin: 0 }}
                             />
-                            <span>Enable automatic updates</span>
+                            <span>Enable automatic update checks on startup</span>
                         </label>
-                        <p style={{ color: 'var(--text-secondary)', fontSize: '12px', marginTop: '4px' }}>
-                            Automatically check for and notify about new Flint releases
-                        </p>
                     </div>
 
                     <div className="form-group">
