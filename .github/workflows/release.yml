@@ -49,27 +49,27 @@ jobs:
             exit 1
           }
 
-          if ($sig) {
-            Write-Host "✓ Found signature file - creating latest.json with updater support"
-            $json = @{
-              version = $version
-              notes = "Release $version - See full changelog at https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }}"
-              pub_date = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
-              platforms = @{
-                "windows-x86_64" = @{
-                  signature = (Get-Content $sig.FullName -Raw).Trim()
-                  url = "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/$($exe.Name)"
-                }
-              }
-            } | ConvertTo-Json -Depth 10
-
-            Set-Content -Path "latest.json" -Value $json
-            Write-Host "Created latest.json:"
-            Get-Content "latest.json"
-          } else {
-            Write-Warning "⚠ No signature file found - skipping latest.json (auto-updater will not work)"
-            Write-Host "To enable auto-updater, set up TAURI_SIGNING_PRIVATE_KEY secrets"
+          if (-not $sig) {
+            Write-Error "Missing .sig file - code signing failed. Check TAURI_SIGNING_PRIVATE_KEY secrets."
+            exit 1
           }
+
+          Write-Host "✓ Found signature file - creating latest.json with updater support"
+          $json = @{
+            version = $version
+            notes = "Release $version - See full changelog at https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }}"
+            pub_date = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+            platforms = @{
+              "windows-x86_64" = @{
+                signature = (Get-Content $sig.FullName -Raw).Trim()
+                url = "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/$($exe.Name)"
+              }
+            }
+          } | ConvertTo-Json -Depth 10
+
+          Set-Content -Path "latest.json" -Value $json
+          Write-Host "Created latest.json:"
+          Get-Content "latest.json"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -78,7 +78,6 @@ jobs:
             src-tauri/target/release/bundle/nsis/*.exe
             src-tauri/target/release/bundle/nsis/*.sig
             latest.json
-          fail_on_unmatched_files: false
           draft: false
           prerelease: false
           generate_release_notes: true
